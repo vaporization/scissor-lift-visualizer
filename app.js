@@ -1,6 +1,6 @@
 // Scissor Lift Visualizer (2D)
-// Key fix: L is now FULL ARM LENGTH (end pivot → end pivot), not half-link.
-// Therefore: h = L*sinθ, w = L*cosθ (per stage). Bars drawn A→C and B→D have length exactly L.
+// L is FULL ARM LENGTH (end pivot → end pivot), not half-link.
+// Therefore: per stage h = L*sinθ, w = L*cosθ. Bars drawn A→C and B→D have length exactly L.
 
 const $ = (id) => document.getElementById(id);
 
@@ -19,6 +19,11 @@ const ui = {
   label_platformWidth: $("label_platformWidth"),
   label_baseWidth: $("label_baseWidth"),
 
+  loadUnits: $("loadUnits"),
+  label_Wpayload: $("label_Wpayload"),
+  label_Wplatform: $("label_Wplatform"),
+  label_WarmsStage: $("label_WarmsStage"),
+
   actEnable: $("actEnable"),
   actBase: $("actBase"),
   actMove: $("actMove"),
@@ -26,12 +31,6 @@ const ui = {
   actLenReadout: $("actLenReadout"),
   label_actLen: $("label_actLen"),
   showPointLabels: $("showPointLabels"),
-
-  // NEW: actuator bracket offsets (displayed in geometry units; stored in meters internally)
-  actBaseDx: $("actBaseDx"),
-  actBaseDy: $("actBaseDy"),
-  actMoveDx: $("actMoveDx"),
-  actMoveDy: $("actMoveDy"),
 
   Wpayload: $("Wpayload"),
   Wplatform: $("Wplatform"),
@@ -69,19 +68,20 @@ const RAD2DEG = 180 / Math.PI;
 function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
 function fmt(x, digits=3){ return Number.isFinite(x) ? x.toFixed(digits) : "—"; }
 
-// --- Units (geometry-only) ---
+// -------------------- Units (Geometry-only) --------------------
 const M_PER_IN = 0.0254;
 let lastGeomUnits = ui.geomUnits?.value || "metric";
 
 function toMeters_fromGeomUnits(val, units){ return units === "us" ? (val * M_PER_IN) : val; }
 function fromMeters_toGeomUnits(m, units){ return units === "us" ? (m / M_PER_IN) : m; }
-function unitLabel(units){ return units === "us" ? "in" : "m"; }
+function unitLabelGeom(units){ return units === "us" ? "in" : "m"; }
 function fmtLenFromMeters(m, units, digits=3){
   const v = fromMeters_toGeomUnits(m, units);
-  return `${v.toFixed(digits)} ${unitLabel(units)}`;
+  return `${v.toFixed(digits)} ${unitLabelGeom(units)}`;
 }
+
 function updateGeomLabels(units){
-  const u = unitLabel(units);
+  const u = unitLabelGeom(units);
   if(ui.label_L) ui.label_L.firstChild.textContent = `\n          Arm length L (${u})\n          `;
   if(ui.label_platformWidth) ui.label_platformWidth.firstChild.textContent = `\n          Platform width (${u})\n          `;
   if(ui.label_baseWidth) ui.label_baseWidth.firstChild.textContent = `\n          Base width (${u})\n          `;
@@ -89,7 +89,26 @@ function updateGeomLabels(units){
     `\n          Actuator length (${u}) — driving input (when actuator ON)\n          `;
 }
 
-// --- Geometry Solver ---
+// -------------------- Units (Loads/Forces) --------------------
+const N_PER_LBF = 4.4482216152605;
+let lastLoadUnits = ui.loadUnits?.value || "N";
+
+function toNewtons_fromLoadUnits(val, units){ return units === "lbf" ? (val * N_PER_LBF) : val; }
+function fromNewtons_toLoadUnits(N, units){ return units === "lbf" ? (N / N_PER_LBF) : N; }
+function unitLabelLoad(units){ return units === "lbf" ? "lbf" : "N"; }
+function fmtForceFromNewtons(N, units, digits=1){
+  const v = fromNewtons_toLoadUnits(N, units);
+  return `${v.toFixed(digits)} ${unitLabelLoad(units)}`;
+}
+
+function updateLoadLabels(units){
+  const u = unitLabelLoad(units);
+  if(ui.label_Wpayload) ui.label_Wpayload.firstChild.textContent = `\n          Payload weight (${u})\n          `;
+  if(ui.label_Wplatform) ui.label_Wplatform.firstChild.textContent = `\n          Platform weight (${u})\n          `;
+  if(ui.label_WarmsStage) ui.label_WarmsStage.firstChild.textContent = `\n          Arm weight per stage (${u})\n          `;
+}
+
+// -------------------- Geometry Solver --------------------
 // L = full bar length end-to-end.
 // For one stage: w = L*cosθ, h = L*sinθ
 function solveScissor({ L, N, thetaDeg }){
@@ -102,13 +121,11 @@ function solveScissor({ L, N, thetaDeg }){
   for(let i=0; i<N; i++){
     const y = i * h;
 
-    // stage corners
-    const A = {x:0, y:y};       // bottom-left
-    const B = {x:w, y:y};       // bottom-right
-    const D = {x:0, y:y+h};     // top-left
-    const C = {x:w, y:y+h};     // top-right
+    const A = {x:0, y:y};
+    const B = {x:w, y:y};
+    const D = {x:0, y:y+h};
+    const C = {x:w, y:y+h};
 
-    // crossing pivot at midpoint of each bar
     const P = {x:w/2, y:y+h/2};
 
     stages.push({ A,B,C,D,P });
@@ -120,10 +137,7 @@ function solveScissor({ L, N, thetaDeg }){
   return { theta, h, w, H, stages, bottomPlatform, topPlatform };
 }
 
-// --- Selectable points for actuator endpoints ---
-// Joints: A,B,C,D,P
-// Plus half-link midpoints (blue circled regions):
-// A→P midpoint, P→C midpoint, B→P midpoint, P→D midpoint
+// -------------------- Selectable points for actuator endpoints --------------------
 function lerpPoint(p1, p2, t){ return { x: p1.x + (p2.x-p1.x)*t, y: p1.y + (p2.y-p1.y)*t }; }
 
 function getSelectablePointsForStage(sol, i){
@@ -212,28 +226,17 @@ function refreshActuatorSelects(N){
   ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
 }
 
-// NEW: apply bracket offsets in WORLD coordinates (meters)
-function getActuatorWorldEndpoints(sol, baseKey, moveKey, p){
-  const a = getPointByKey(sol, baseKey);
-  const b = getPointByKey(sol, moveKey);
-  if(!a || !b) return null;
-
-  const p1 = { x: a.x + (p?.actBaseDx || 0), y: a.y + (p?.actBaseDy || 0) };
-  const p2 = { x: b.x + (p?.actMoveDx || 0), y: b.y + (p?.actMoveDy || 0) };
-  return { p1, p2 };
-}
-
-function actuatorLength(sol, baseKey, moveKey, p){
-  const ends = getActuatorWorldEndpoints(sol, baseKey, moveKey, p);
-  if(!ends) return NaN;
-  const { p1, p2 } = ends;
+function actuatorLength(sol, baseKey, moveKey){
+  const p1 = getPointByKey(sol, baseKey);
+  const p2 = getPointByKey(sol, moveKey);
+  if(!p1 || !p2) return NaN;
   return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
 
-// --- Placement-aware force model (virtual work) ---
+// -------------------- Placement-aware force model (virtual work) --------------------
 // F ≈ W * (dH/dθ) / (dℓ/dθ)
 function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
-  const dThetaDeg = 0.05; // small finite difference step
+  const dThetaDeg = 0.05;
   const t1 = clamp(thetaDeg - dThetaDeg, p.thetaMin, p.thetaMax);
   const t2 = clamp(thetaDeg + dThetaDeg, p.thetaMin, p.thetaMax);
 
@@ -243,29 +246,28 @@ function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
   const H1 = sol1.H;
   const H2 = sol2.H;
 
-  const l1 = actuatorLength(sol1, baseKey, moveKey, p);
-  const l2 = actuatorLength(sol2, baseKey, moveKey, p);
+  const l1 = actuatorLength(sol1, baseKey, moveKey);
+  const l2 = actuatorLength(sol2, baseKey, moveKey);
 
   if(!Number.isFinite(l1) || !Number.isFinite(l2)) return { F: NaN, dldtheta: NaN };
 
   const dH = (H2 - H1);
   const dl = (l2 - l1);
 
-  // If dl ~ 0, actuator is in a near-singular placement (huge force)
   if(Math.abs(dl) < 1e-9) return { F: Infinity, dldtheta: 0 };
 
   const F = Wtotal * (dH / dl);
   return { F: Math.abs(F), dldtheta: dl / ((t2 - t1) * DEG2RAD) };
 }
 
-// --- Inverse solve: θ from actuator length ---
+// -------------------- Inverse solve: θ from actuator length --------------------
 function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
   const thetaMin = p.thetaMin;
   const thetaMax = p.thetaMax;
 
   const lenAt = (thetaDeg) => {
     const sol = solveScissor({ L:p.L, N:p.N, thetaDeg });
-    return actuatorLength(sol, baseKey, moveKey, p);
+    return actuatorLength(sol, baseKey, moveKey);
   };
 
   const lenMin = lenAt(thetaMin);
@@ -301,7 +303,7 @@ function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
   return { thetaDeg: 0.5*(a+b), ok:true, clamped };
 }
 
-// --- Rendering transform ---
+// -------------------- Rendering transform --------------------
 function makeViewportTransform(sol){
   const margin = 0.18;
   const minX = -margin * (sol.w || 1);
@@ -327,11 +329,10 @@ function el(name, attrs={}){
   return n;
 }
 
-function draw(sol, geomUnits, showLabels, p){
+function draw(sol, geomUnits, showLabels){
   clearScene();
   const { toScreen } = makeViewportTransform(sol);
 
-  // platforms
   const bpL = toScreen(sol.bottomPlatform.left);
   const bpR = toScreen(sol.bottomPlatform.right);
   const tpL = toScreen(sol.topPlatform.left);
@@ -340,48 +341,44 @@ function draw(sol, geomUnits, showLabels, p){
   ui.scene.appendChild(el("line", { x1:bpL.x, y1:bpL.y, x2:bpR.x, y2:bpR.y, stroke:"#a9b1c3", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
   ui.scene.appendChild(el("line", { x1:tpL.x, y1:tpL.y, x2:tpR.x, y2:tpR.y, stroke:"#a9b1c3", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
 
-  // arms (bars): A→C and B→D have length exactly L now
   for(const st of sol.stages){
     const A = toScreen(st.A), B = toScreen(st.B), C = toScreen(st.C), D = toScreen(st.D);
     ui.scene.appendChild(el("line", { x1:A.x, y1:A.y, x2:C.x, y2:C.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
     ui.scene.appendChild(el("line", { x1:B.x, y1:B.y, x2:D.x, y2:D.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
   }
 
-  // actuator (optional) — NOW uses bracket offsets
   if(ui.actEnable?.checked){
     const baseKey = ui.actBase?.value || "A0";
     const moveKey = ui.actMove?.value || "P0";
-    const ends = getActuatorWorldEndpoints(sol, baseKey, moveKey, p);
-    if(ends){
-      const p1 = toScreen(ends.p1);
-      const p2 = toScreen(ends.p2);
+    const p1w = getPointByKey(sol, baseKey);
+    const p2w = getPointByKey(sol, moveKey);
+    if(p1w && p2w){
+      const p1 = toScreen(p1w);
+      const p2 = toScreen(p2w);
       ui.scene.appendChild(el("line", { x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y, stroke:"#ff9e64", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
       ui.scene.appendChild(el("circle", { cx:p1.x, cy:p1.y, r:7, fill:"#ff9e64" }));
       ui.scene.appendChild(el("circle", { cx:p2.x, cy:p2.y, r:7, fill:"#ff9e64" }));
     }
   }
 
-  // fixed pivots (A0,B0)
-  for(const p0 of [sol.stages[0].A, sol.stages[0].B]){
-    const s = toScreen(p0);
+  for(const p of [sol.stages[0].A, sol.stages[0].B]){
+    const s = toScreen(p);
     ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:7, fill:"#7aa2f7" }));
   }
 
-  // joints
   for(const st of sol.stages){
-    for(const pj of [st.A, st.B, st.C, st.D, st.P]){
-      const s = toScreen(pj);
+    for(const p of [st.A, st.B, st.C, st.D, st.P]){
+      const s = toScreen(p);
       ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:5, fill:"#c3e88d" }));
     }
   }
 
-  // selectable midpoints
   for(let i=0; i<sol.stages.length; i++){
     const pts = getSelectablePointsForStage(sol, i);
     const keys = [`AP_${i}`, `PC_${i}`, `BP_${i}`, `PD_${i}`];
     for(const k of keys){
-      const pnt = pts[k];
-      const s = toScreen(pnt);
+      const p = pts[k];
+      const s = toScreen(p);
       ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:4.5, fill:"#89ddff", opacity:0.95 }));
       if(showLabels){
         ui.scene.appendChild(el("text", { x:s.x+6, y:s.y-6, fill:"#89ddff", "font-size":"12" })).textContent = k;
@@ -389,9 +386,8 @@ function draw(sol, geomUnits, showLabels, p){
     }
   }
 
-  // labels
   ui.scene.appendChild(el("text", { x:tpL.x, y:tpL.y - 12, fill:"#a9b1c3", "font-size":"14" }))
-    .textContent = `Top platform y = ${fromMeters_toGeomUnits(sol.H, geomUnits).toFixed(3)} ${unitLabel(geomUnits)}`;
+    .textContent = `Top platform y = ${fromMeters_toGeomUnits(sol.H, geomUnits).toFixed(3)} ${unitLabelGeom(geomUnits)}`;
 
   ui.scene.appendChild(el("text", { x:bpL.x, y:bpL.y + 18, fill:"#a9b1c3", "font-size":"14" }))
     .textContent = `Base`;
@@ -409,7 +405,8 @@ function renderWarnings(items){
 
 function computeWarnings(p, sol, out){
   const warnings = [];
-  const units = p.geomUnits;
+  const gu = p.geomUnits;
+  const lu = p.loadUnits;
 
   if(p.thetaDeg < p.thetaMin + 2){
     warnings.push({ kind:"bad", msg:`θ is very close to θ_min. Near-collapse region: force sensitivity is high.` });
@@ -417,11 +414,10 @@ function computeWarnings(p, sol, out){
     warnings.push({ kind:"warn", msg:`Low θ (< 10°): expect major force spike near collapse.` });
   }
 
-  // Keep baseWidth warning as a soft feasibility note (since our base pivots are drawn at A0 and B0)
   if(p.baseWidth > sol.w){
     warnings.push({
       kind:"warn",
-      msg:`Base width (${fromMeters_toGeomUnits(p.baseWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds current scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}). If your base pivots are fixed, this is a geometry mismatch.`
+      msg:`Base width (${fromMeters_toGeomUnits(p.baseWidth, gu).toFixed(2)} ${unitLabelGeom(gu)}) exceeds current scissor span w (${fromMeters_toGeomUnits(sol.w, gu).toFixed(2)} ${unitLabelGeom(gu)}). If your base pivots are fixed, this is a geometry mismatch.`
     });
   }
 
@@ -437,10 +433,14 @@ function computeWarnings(p, sol, out){
     warnings.push({ kind:"bad", msg:`Actuator placement is near-singular (dℓ/dθ ≈ 0). Required actuator force spikes extremely high.` });
   }
 
-  if(Number.isFinite(out.FperAct) && out.FperAct > 50000){
-    warnings.push({ kind:"bad", msg:`Per-actuator force is extremely high (>50 kN).` });
-  } else if(Number.isFinite(out.FperAct) && out.FperAct > 20000){
-    warnings.push({ kind:"warn", msg:`Per-actuator force is high (>20 kN).` });
+  // Force reasonableness thresholds (kept in N internally, displayed in chosen load units)
+  const hiN = 50000;
+  const medN = 20000;
+
+  if(Number.isFinite(out.FperAct) && out.FperAct > hiN){
+    warnings.push({ kind:"bad", msg:`Per-actuator force is extremely high (> ${fmtForceFromNewtons(hiN, lu, 0)}).` });
+  } else if(Number.isFinite(out.FperAct) && out.FperAct > medN){
+    warnings.push({ kind:"warn", msg:`Per-actuator force is high (> ${fmtForceFromNewtons(medN, lu, 0)}).` });
   }
 
   if(warnings.length === 0) warnings.push({ kind:"ok", msg:`No warnings triggered.` });
@@ -450,6 +450,9 @@ function computeWarnings(p, sol, out){
 function readParams(){
   const geomUnits = ui.geomUnits?.value || "metric";
   updateGeomLabels(geomUnits);
+
+  const loadUnits = ui.loadUnits?.value || "N";
+  updateLoadLabels(loadUnits);
 
   const L = toMeters_fromGeomUnits(Number(ui.L.value), geomUnits);
   const N = Math.round(Number(ui.N.value));
@@ -467,9 +470,11 @@ function readParams(){
   const platformWidth = toMeters_fromGeomUnits(Number(ui.platformWidth.value), geomUnits);
   const baseWidth = toMeters_fromGeomUnits(Number(ui.baseWidth.value), geomUnits);
 
-  const Wpayload = Number(ui.Wpayload.value);
-  const Wplatform = Number(ui.Wplatform.value);
-  const WarmsStage = Number(ui.WarmsStage.value);
+  // Loads read in current load units and converted to Newtons internally
+  const Wpayload = toNewtons_fromLoadUnits(Number(ui.Wpayload.value), loadUnits);
+  const Wplatform = toNewtons_fromLoadUnits(Number(ui.Wplatform.value), loadUnits);
+  const WarmsStage = toNewtons_fromLoadUnits(Number(ui.WarmsStage.value), loadUnits);
+
   const frictionPct = Number(ui.frictionPct.value);
   const SF = Number(ui.SF.value);
   const nAct = Math.max(1, Math.round(Number(ui.nAct.value)));
@@ -480,19 +485,12 @@ function readParams(){
   const actLenDisplay = Number(ui.actLen?.value || 0);
   const actLenM = toMeters_fromGeomUnits(actLenDisplay, geomUnits);
 
-  // NEW: offsets entered in geometry units; convert to meters
-  const actBaseDx = toMeters_fromGeomUnits(Number(ui.actBaseDx?.value || 0), geomUnits);
-  const actBaseDy = toMeters_fromGeomUnits(Number(ui.actBaseDy?.value || 0), geomUnits);
-  const actMoveDx = toMeters_fromGeomUnits(Number(ui.actMoveDx?.value || 0), geomUnits);
-  const actMoveDy = toMeters_fromGeomUnits(Number(ui.actMoveDy?.value || 0), geomUnits);
-
   return {
-    geomUnits,
+    geomUnits, loadUnits,
     L, N, thetaMin, thetaMax, thetaDeg,
     platformWidth, baseWidth,
     Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct,
-    actEnabled, actLenM, showLabels,
-    actBaseDx, actBaseDy, actMoveDx, actMoveDy
+    actEnabled, actLenM, showLabels
   };
 }
 
@@ -503,8 +501,8 @@ function setActuatorLenSliderRangeFromThetaLimits(p){
   const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
   const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
-  const lenMin = actuatorLength(solMin, baseKey, moveKey, p);
-  const lenMax = actuatorLength(solMax, baseKey, moveKey, p);
+  const lenMin = actuatorLength(solMin, baseKey, moveKey);
+  const lenMax = actuatorLength(solMax, baseKey, moveKey);
   if(!Number.isFinite(lenMin) || !Number.isFinite(lenMax)) return;
 
   const lo = Math.min(lenMin, lenMax);
@@ -526,7 +524,7 @@ function updateDriveUI(p){
   ui.actLen.disabled = !p.actEnabled;
 
   const disp = fromMeters_toGeomUnits(p.actLenM, p.geomUnits);
-  ui.actLenReadout.textContent = `${disp.toFixed(3)} ${unitLabel(p.geomUnits)}`;
+  ui.actLenReadout.textContent = `${disp.toFixed(3)} ${unitLabelGeom(p.geomUnits)}`;
 }
 
 function update(){
@@ -555,13 +553,12 @@ function update(){
 
   const sol = solveScissor({ L:p.L, N:p.N, thetaDeg });
 
-  // Stroke (over θ range)
   const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
   const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
-  const actLen = actuatorLength(sol, baseKey, moveKey, p);
-  const actMin = actuatorLength(solMin, baseKey, moveKey, p);
-  const actMax = actuatorLength(solMax, baseKey, moveKey, p);
+  const actLen = actuatorLength(sol, baseKey, moveKey);
+  const actMin = actuatorLength(solMin, baseKey, moveKey);
+  const actMax = actuatorLength(solMax, baseKey, moveKey);
 
   const strokeTotal = (Number.isFinite(actMin) && Number.isFinite(actMax)) ? (actMax - actMin) : NaN;
   const strokeUsed  = (Number.isFinite(actLen) && Number.isFinite(actMin)) ? (actLen - actMin) : NaN;
@@ -569,13 +566,12 @@ function update(){
   if(p.actEnabled && Number.isFinite(actLen)){
     const actDisp = fromMeters_toGeomUnits(actLen, p.geomUnits);
     ui.actLen.value = String(actDisp);
-    ui.actLenReadout.textContent = `${actDisp.toFixed(3)} ${unitLabel(p.geomUnits)}`;
+    ui.actLenReadout.textContent = `${actDisp.toFixed(3)} ${unitLabelGeom(p.geomUnits)}`;
   }
 
-  // Loads
+  // Loads are already in Newtons internally
   const Wtotal = p.Wpayload + p.Wplatform + p.N * p.WarmsStage;
 
-  // Placement-aware actuator force (virtual work)
   let FactVW = NaN;
   if(p.actEnabled){
     const vw = placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal });
@@ -596,9 +592,9 @@ function update(){
   ui.out_strokeUsed.textContent = p.actEnabled ? fmtLenFromMeters(strokeUsed, p.geomUnits, 3) : "—";
   ui.out_strokeTotal.textContent = p.actEnabled ? fmtLenFromMeters(strokeTotal, p.geomUnits, 3) : "—";
 
-  ui.out_Wtotal.textContent = `${fmt(Wtotal,1)} N`;
-  ui.out_Fact.textContent = p.actEnabled ? `${fmt(FactVW,1)} N` : "—";
-  ui.out_Fper.textContent = p.actEnabled ? `${fmt(FperAct,1)} N` : "—";
+  ui.out_Wtotal.textContent = fmtForceFromNewtons(Wtotal, p.loadUnits, 1);
+  ui.out_Fact.textContent = p.actEnabled ? fmtForceFromNewtons(FactVW, p.loadUnits, 1) : "—";
+  ui.out_Fper.textContent = p.actEnabled ? fmtForceFromNewtons(FperAct, p.loadUnits, 1) : "—";
 
   renderWarnings(computeWarnings(
     { ...p, thetaDeg },
@@ -606,7 +602,7 @@ function update(){
     { actEnabled:p.actEnabled, actClamped:!!actSolve.clamped, actLen, FactVW, FperAct }
   ));
 
-  draw(sol, p.geomUnits, p.showLabels, p);
+  draw(sol, p.geomUnits, p.showLabels);
 }
 
 // Animation
@@ -634,7 +630,7 @@ function startAnim(dir){
       if(v <= min){ v = min; anim.running = false; }
 
       ui.actLen.value = String(v);
-      ui.actLenReadout.textContent = `${v.toFixed(3)} ${unitLabel(p.geomUnits)}`;
+      ui.actLenReadout.textContent = `${v.toFixed(3)} ${unitLabelGeom(p.geomUnits)}`;
     } else {
       const speedDegPerSec = 18;
       let t = Number(ui.theta.value);
@@ -665,10 +661,7 @@ function stopAnim(){
   ui.platformWidth, ui.baseWidth,
   ui.theta,
   ui.Wpayload, ui.Wplatform, ui.WarmsStage,
-  ui.frictionPct, ui.SF, ui.nAct,
-
-  // NEW: offsets
-  ui.actBaseDx, ui.actBaseDy, ui.actMoveDx, ui.actMoveDy
+  ui.frictionPct, ui.SF, ui.nAct
 ].forEach(inp => inp.addEventListener("input", () => update()));
 
 ui.actEnable?.addEventListener("change", () => { stopAnim(); update(); });
@@ -677,40 +670,47 @@ ui.actMove?.addEventListener("change", () => { stopAnim(); update(); });
 ui.actLen?.addEventListener("input", () => { if(ui.actEnable.checked) update(); });
 ui.showPointLabels?.addEventListener("change", update);
 
+// Geometry units toggle: convert displayed geometry values
 ui.geomUnits?.addEventListener("change", () => {
   stopAnim();
   const newUnits = ui.geomUnits.value;
   const oldUnits = lastGeomUnits;
 
-  // preserve physical lengths when switching units
   const L_display = Number(ui.L.value);
   const platformW_display = Number(ui.platformWidth.value);
   const baseW_display = Number(ui.baseWidth.value);
-
-  const baseDx_display = Number(ui.actBaseDx.value);
-  const baseDy_display = Number(ui.actBaseDy.value);
-  const moveDx_display = Number(ui.actMoveDx.value);
-  const moveDy_display = Number(ui.actMoveDy.value);
 
   const L_m = toMeters_fromGeomUnits(L_display, oldUnits);
   const plat_m = toMeters_fromGeomUnits(platformW_display, oldUnits);
   const base_m = toMeters_fromGeomUnits(baseW_display, oldUnits);
 
-  const baseDx_m = toMeters_fromGeomUnits(baseDx_display, oldUnits);
-  const baseDy_m = toMeters_fromGeomUnits(baseDy_display, oldUnits);
-  const moveDx_m = toMeters_fromGeomUnits(moveDx_display, oldUnits);
-  const moveDy_m = toMeters_fromGeomUnits(moveDy_display, oldUnits);
-
   ui.L.value = fromMeters_toGeomUnits(L_m, newUnits).toFixed(3);
   ui.platformWidth.value = fromMeters_toGeomUnits(plat_m, newUnits).toFixed(3);
   ui.baseWidth.value = fromMeters_toGeomUnits(base_m, newUnits).toFixed(3);
 
-  ui.actBaseDx.value = fromMeters_toGeomUnits(baseDx_m, newUnits).toFixed(3);
-  ui.actBaseDy.value = fromMeters_toGeomUnits(baseDy_m, newUnits).toFixed(3);
-  ui.actMoveDx.value = fromMeters_toGeomUnits(moveDx_m, newUnits).toFixed(3);
-  ui.actMoveDy.value = fromMeters_toGeomUnits(moveDy_m, newUnits).toFixed(3);
-
   lastGeomUnits = newUnits;
+  update();
+});
+
+// Load units toggle: convert displayed load values
+ui.loadUnits?.addEventListener("change", () => {
+  stopAnim();
+  const newUnits = ui.loadUnits.value;
+  const oldUnits = lastLoadUnits;
+
+  const wp = Number(ui.Wpayload.value);
+  const wpl = Number(ui.Wplatform.value);
+  const wa = Number(ui.WarmsStage.value);
+
+  const wpN = toNewtons_fromLoadUnits(wp, oldUnits);
+  const wplN = toNewtons_fromLoadUnits(wpl, oldUnits);
+  const waN = toNewtons_fromLoadUnits(wa, oldUnits);
+
+  ui.Wpayload.value = fromNewtons_toLoadUnits(wpN, newUnits).toFixed(2);
+  ui.Wplatform.value = fromNewtons_toLoadUnits(wplN, newUnits).toFixed(2);
+  ui.WarmsStage.value = fromNewtons_toLoadUnits(waN, newUnits).toFixed(2);
+
+  lastLoadUnits = newUnits;
   update();
 });
 
@@ -720,5 +720,6 @@ ui.btnStop.addEventListener("click", () => stopAnim());
 
 // Init
 updateGeomLabels(lastGeomUnits);
+updateLoadLabels(lastLoadUnits);
 refreshActuatorSelects(Math.round(Number(ui.N.value)) || 2);
 update();

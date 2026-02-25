@@ -17,6 +17,16 @@
     <section class="panel">
       <h2>Inputs</h2>
 
+      <!-- MOVED UP: Controls -->
+      <div class="group">
+        <h3>Controls</h3>
+        <div class="row">
+          <button id="btnLower">Lower</button>
+          <button id="btnLift" class="primary">Lift</button>
+          <button id="btnStop">Stop</button>
+        </div>
+      </div>
+
       <div class="group">
         <h3>A) Geometry</h3>
 
@@ -69,16 +79,24 @@
         <h3>B) Loads / Factors</h3>
 
         <label>
+          Load units
+          <select id="loadUnits">
+            <option value="N" selected>SI (N)</option>
+            <option value="lbf">US (lbf)</option>
+          </select>
+        </label>
+
+        <label id="label_Wpayload">
           Payload weight (N)
           <input id="Wpayload" type="number" step="10" min="0" value="1000">
         </label>
 
-        <label>
+        <label id="label_Wplatform">
           Platform weight (N)
           <input id="Wplatform" type="number" step="10" min="0" value="200">
         </label>
 
-        <label>
+        <label id="label_WarmsStage">
           Arm weight per stage (N)
           <input id="WarmsStage" type="number" step="10" min="0" value="150">
         </label>
@@ -117,29 +135,6 @@
           <select id="actMove"></select>
         </label>
 
-        <!-- NEW: bracket offsets -->
-        <div class="row2">
-          <label>
-            Base offset Δx (same units)
-            <input id="actBaseDx" type="number" step="0.01" value="0">
-          </label>
-          <label>
-            Base offset Δy (same units)
-            <input id="actBaseDy" type="number" step="0.01" value="0">
-          </label>
-        </div>
-
-        <div class="row2">
-          <label>
-            Move offset Δx (same units)
-            <input id="actMoveDx" type="number" step="0.01" value="0">
-          </label>
-          <label>
-            Move offset Δy (same units)
-            <input id="actMoveDy" type="number" step="0.01" value="0">
-          </label>
-        </div>
-
         <label id="label_actLen">
           Actuator length (m) — driving input (when actuator ON)
           <input id="actLen" type="range" min="0" max="1" step="0.001" value="0.5">
@@ -153,17 +148,7 @@
 
         <div class="small">
           Points include joints (A/B/C/D/P) and half-link midpoints (the “blue circled” zones).
-          Offsets emulate real mounting brackets (tilted actuator).
           When enabled, motion solves θ from actuator length.
-        </div>
-      </div>
-
-      <div class="group">
-        <h3>Controls</h3>
-        <div class="row">
-          <button id="btnLower">Lower</button>
-          <button id="btnLift" class="primary">Lift</button>
-          <button id="btnStop">Stop</button>
         </div>
       </div>
     </section>
