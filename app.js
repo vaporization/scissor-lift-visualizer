@@ -13,6 +13,16 @@ const ui = {
   theta: $("theta"),
   thetaReadout: $("thetaReadout"),
 
+  // Geometry units toggle
+  geomUnits: $("geomUnits"),
+  label_L: $("label_L"),
+  label_platformWidth: $("label_platformWidth"),
+  label_baseWidth: $("label_baseWidth"),
+
+  // Actuator attachment selectors
+  actBase: $("actBase"),
+  actMove: $("actMove"),
+
   Wpayload: $("Wpayload"),
   Wplatform: $("Wplatform"),
   WarmsStage: $("WarmsStage"),
@@ -47,7 +57,32 @@ const DEG2RAD = Math.PI / 180;
 function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
 function fmt(x, digits=3){ return Number.isFinite(x) ? x.toFixed(digits) : "—"; }
 
-// World geometry solver: returns joints for a symmetric stacked scissor
+// --- Units (geometry-only) ---
+const M_PER_IN = 0.0254;
+let lastGeomUnits = ui.geomUnits?.value || "metric";
+
+function toMeters_fromGeomUnits(val, units){
+  return units === "us" ? (val * M_PER_IN) : val;
+}
+function fromMeters_toGeomUnits(m, units){
+  return units === "us" ? (m / M_PER_IN) : m;
+}
+function unitLabel(units){
+  return units === "us" ? "in" : "m";
+}
+function fmtLenFromMeters(m, units, digits=3){
+  const v = fromMeters_toGeomUnits(m, units);
+  return `${v.toFixed(digits)} ${unitLabel(units)}`;
+}
+function updateGeomLabels(units){
+  // Keep labels aligned with current geometry units
+  const u = unitLabel(units);
+  if(ui.label_L) ui.label_L.firstChild.textContent = `\n          Arm length L (${u})\n          `;
+  if(ui.label_platformWidth) ui.label_platformWidth.firstChild.textContent = `\n          Platform width (${u})\n          `;
+  if(ui.label_baseWidth) ui.label_baseWidth.firstChild.textContent = `\n          Base width (${u})\n          `;
+}
+
+// --- Geometry Solver ---
 function solveScissor({ L, N, thetaDeg }){
   const theta = thetaDeg * DEG2RAD;
   const h = 2 * L * Math.sin(theta);
@@ -62,7 +97,6 @@ function solveScissor({ L, N, thetaDeg }){
     const D = {x:0, y:y+h};     // top-left
     const C = {x:w, y:y+h};     // top-right
     const P = {x:w/2, y:y+h/2}; // center pivot
-
     stages.push({ A,B,C,D,P });
   }
 
@@ -72,15 +106,82 @@ function solveScissor({ L, N, thetaDeg }){
   return { theta, h, w, H, stages, bottomPlatform, topPlatform };
 }
 
-// Actuator model: derived from two chosen attachment points.
-// For the starter: base anchor at bottom-left pivot A0,
-// scissor anchor at center pivot of stage 0 (P0).
-function actuatorLength(sol){
-  const base = sol.stages[0].A;
-  const attach = sol.stages[0].P;
-  const dx = attach.x - base.x;
-  const dy = attach.y - base.y;
-  return Math.hypot(dx, dy);
+// --- Joint key system for actuator endpoints ---
+function getJointByKey(sol, key){
+  if(!key || key.length < 2) return null;
+  const joint = key[0];
+  const idx = Number(key.slice(1));
+  if(!Number.isFinite(idx) || idx < 0 || idx >= sol.stages.length) return null;
+
+  const st = sol.stages[idx];
+  switch(joint){
+    case "A": return st.A;
+    case "B": return st.B;
+    case "C": return st.C;
+    case "D": return st.D;
+    case "P": return st.P;
+    default: return null;
+  }
+}
+
+function labelForJointKey(key){
+  const j = key[0];
+  const i = key.slice(1);
+  const name =
+    j === "A" ? "Bottom-Left" :
+    j === "B" ? "Bottom-Right" :
+    j === "C" ? "Top-Right" :
+    j === "D" ? "Top-Left" :
+    j === "P" ? "Center" : j;
+  return `${name} (stage ${i})`;
+}
+
+function buildJointOptions(N){
+  const joints = ["A","B","P","D","C"]; // display order
+  const keys = [];
+  for(let i=0; i<N; i++){
+    for(const j of joints) keys.push(`${j}${i}`);
+  }
+  return keys;
+}
+
+function refreshActuatorSelects(N){
+  if(!ui.actBase || !ui.actMove) return;
+
+  const keys = buildJointOptions(N);
+  const prevBase = ui.actBase.value || "A0";
+  const prevMove = ui.actMove.value || "P0";
+
+  ui.actBase.innerHTML = "";
+  ui.actMove.innerHTML = "";
+
+  for(const k of keys){
+    const o1 = document.createElement("option");
+    o1.value = k;
+    o1.textContent = `${k} — ${labelForJointKey(k)}`;
+    ui.actBase.appendChild(o1);
+
+    const o2 = document.createElement("option");
+    o2.value = k;
+    o2.textContent = `${k} — ${labelForJointKey(k)}`;
+    ui.actMove.appendChild(o2);
+  }
+
+  ui.actBase.value = keys.includes(prevBase) ? prevBase : "A0";
+  ui.actMove.value = keys.includes(prevMove) ? prevMove : "P0";
+
+  // Nice default for 2+ stages: push on an inner stage center
+  if(N >= 2 && ui.actMove.value === "P0"){
+    ui.actMove.value = "P1";
+  }
+}
+
+// Actuator length derived from selected joints
+function actuatorLength(sol, baseKey, moveKey){
+  const p1 = getJointByKey(sol, baseKey);
+  const p2 = getJointByKey(sol, moveKey);
+  if(!p1 || !p2) return NaN;
+  return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
 
 // Force trend model (given): Fact ≈ N * Wtotal * tan(theta)
@@ -90,11 +191,8 @@ function forceTrend({ N, thetaRad, Wtotal }){
 
 // Rendering: map world coords to svg coords
 function makeViewportTransform(sol){
-  // Add margins and account for platform/base widths for fit checks,
-  // but keep transform based on scissor envelope.
   const margin = 0.15;
 
-  // World extents
   const minX = -margin * sol.w;
   const maxX = sol.w * (1 + margin);
   const minY = -margin * (sol.H || 1);
@@ -111,7 +209,6 @@ function makeViewportTransform(sol){
   const s = Math.min(sx, sy);
 
   const tx = (viewW - worldW * s) / 2 - minX * s;
-  // SVG y grows downward; flip Y
   const ty = (viewH - worldH * s) / 2 + maxY * s;
 
   function toScreen(p){
@@ -130,7 +227,7 @@ function el(name, attrs={}){
   return n;
 }
 
-function draw(sol){
+function draw(sol, geomUnits){
   clearScene();
   const { toScreen } = makeViewportTransform(sol);
 
@@ -164,13 +261,20 @@ function draw(sol){
     }));
   }
 
-  // Actuator (derived): A0 -> P0
-  const base = toScreen(sol.stages[0].A);
-  const attach = toScreen(sol.stages[0].P);
-  ui.scene.appendChild(el("line", {
-    x1: base.x, y1: base.y, x2: attach.x, y2: attach.y,
-    stroke:"#ff9e64", "stroke-width": 6, "stroke-linecap":"round", opacity:0.95
-  }));
+  // Actuator (derived): selected joints
+  const baseKey = ui.actBase?.value || "A0";
+  const moveKey = ui.actMove?.value || "P0";
+  const p1w = getJointByKey(sol, baseKey);
+  const p2w = getJointByKey(sol, moveKey);
+
+  if(p1w && p2w){
+    const p1 = toScreen(p1w);
+    const p2 = toScreen(p2w);
+    ui.scene.appendChild(el("line", {
+      x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
+      stroke:"#ff9e64", "stroke-width": 6, "stroke-linecap":"round", opacity:0.95
+    }));
+  }
 
   // Joints (pivots)
   const rFixed = 7, rJoint = 5;
@@ -192,7 +296,7 @@ function draw(sol){
   // Labels (simple)
   ui.scene.appendChild(el("text", {
     x: tpL.x, y: tpL.y - 12, fill:"#a9b1c3", "font-size":"14"
-  })).textContent = `Top platform y = ${fmt(sol.H,3)} m`;
+  })).textContent = `Top platform y = ${fromMeters_toGeomUnits(sol.H, geomUnits).toFixed(3)} ${unitLabel(geomUnits)}`;
 
   ui.scene.appendChild(el("text", {
     x: bpL.x, y: bpL.y + 18, fill:"#a9b1c3", "font-size":"14"
@@ -205,6 +309,7 @@ function computeWarnings(params, sol, outputs){
   const thetaDeg = params.thetaDeg;
   const thetaMin = params.thetaMin;
   const thetaMax = params.thetaMax;
+  const units = params.geomUnits;
 
   // Singularity proximity
   if(thetaDeg < thetaMin + 2){
@@ -213,12 +318,18 @@ function computeWarnings(params, sol, outputs){
     warnings.push({ kind:"warn", msg:`Low θ (< 10°): expect major force spike near collapse.` });
   }
 
-  // Platform/base fit vs span
+  // Platform/base fit vs span (all internal meters; display in chosen units)
   if(params.platformWidth > sol.w){
-    warnings.push({ kind:"bad", msg:`Platform width (${fmt(params.platformWidth,2)} m) exceeds scissor span w (${fmt(sol.w,2)} m). Geometry/mounting mismatch.` });
+    warnings.push({
+      kind:"bad",
+      msg:`Platform width (${fromMeters_toGeomUnits(params.platformWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}). Geometry/mounting mismatch.`
+    });
   }
   if(params.baseWidth > sol.w){
-    warnings.push({ kind:"warn", msg:`Base width (${fmt(params.baseWidth,2)} m) exceeds scissor span w (${fmt(sol.w,2)} m). Check bottom pivot mounting feasibility.` });
+    warnings.push({
+      kind:"warn",
+      msg:`Base width (${fromMeters_toGeomUnits(params.baseWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}). Check bottom pivot mounting feasibility.`
+    });
   }
 
   // Angle sanity
@@ -231,6 +342,11 @@ function computeWarnings(params, sol, outputs){
     warnings.push({ kind:"bad", msg:`Per-actuator force is extremely high (>50 kN). This configuration is likely impractical.` });
   } else if(outputs.FperAct > 20000){
     warnings.push({ kind:"warn", msg:`Per-actuator force is high (>20 kN). Consider raising θ_min, reducing load, or changing actuator geometry.` });
+  }
+
+  // Actuator joint selection sanity
+  if(outputs.actNaN){
+    warnings.push({ kind:"bad", msg:`Actuator length is invalid. Check actuator endpoint selections.` });
   }
 
   if(warnings.length === 0){
@@ -250,7 +366,11 @@ function renderWarnings(items){
 }
 
 function readParams(){
-  const L = Number(ui.L.value);
+  const geomUnits = ui.geomUnits?.value || "metric";
+  updateGeomLabels(geomUnits);
+
+  // Geometry inputs are displayed in selected units; convert to meters internally
+  const L = toMeters_fromGeomUnits(Number(ui.L.value), geomUnits);
   const N = Math.round(Number(ui.N.value));
   const thetaMin = Number(ui.thetaMin.value);
   const thetaMax = Number(ui.thetaMax.value);
@@ -264,8 +384,8 @@ function readParams(){
   ui.theta.value = String(thetaDeg);
   ui.thetaReadout.textContent = thetaDeg.toFixed(1);
 
-  const platformWidth = Number(ui.platformWidth.value);
-  const baseWidth = Number(ui.baseWidth.value);
+  const platformWidth = toMeters_fromGeomUnits(Number(ui.platformWidth.value), geomUnits);
+  const baseWidth = toMeters_fromGeomUnits(Number(ui.baseWidth.value), geomUnits);
 
   const Wpayload = Number(ui.Wpayload.value);
   const Wplatform = Number(ui.Wplatform.value);
@@ -275,6 +395,7 @@ function readParams(){
   const nAct = Math.max(1, Math.round(Number(ui.nAct.value)));
 
   return {
+    geomUnits,
     L, N, thetaMin, thetaMax, thetaDeg,
     platformWidth, baseWidth,
     Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct
@@ -284,15 +405,21 @@ function readParams(){
 function update(){
   const p = readParams();
 
+  // Ensure actuator joint dropdowns reflect current N (and keep selection when possible)
+  refreshActuatorSelects(p.N);
+
   const sol = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaDeg });
 
   // Derived actuator lengths across travel for stroke
   const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
   const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
-  const actLen = actuatorLength(sol);
-  const actMin = actuatorLength(solMin);
-  const actMax = actuatorLength(solMax);
+  const baseKey = ui.actBase?.value || "A0";
+  const moveKey = ui.actMove?.value || "P0";
+
+  const actLen = actuatorLength(sol, baseKey, moveKey);
+  const actMin = actuatorLength(solMin, baseKey, moveKey);
+  const actMax = actuatorLength(solMax, baseKey, moveKey);
 
   const strokeTotal = actMax - actMin;
   const strokeUsed = actLen - actMin;
@@ -304,24 +431,24 @@ function update(){
   const Frated = Fact * fricMult * p.SF;
   const FperAct = Frated / p.nAct;
 
-  // Outputs
-  ui.out_h.textContent = `${fmt(sol.h,3)} m`;
-  ui.out_H.textContent = `${fmt(sol.H,3)} m`;
-  ui.out_w.textContent = `${fmt(sol.w,3)} m`;
+  // Outputs (geometry in chosen units)
+  ui.out_h.textContent = fmtLenFromMeters(sol.h, p.geomUnits, 3);
+  ui.out_H.textContent = fmtLenFromMeters(sol.H, p.geomUnits, 3);
+  ui.out_w.textContent = fmtLenFromMeters(sol.w, p.geomUnits, 3);
 
-  ui.out_actLen.textContent = `${fmt(actLen,3)} m`;
-  ui.out_strokeUsed.textContent = `${fmt(strokeUsed,3)} m`;
-  ui.out_strokeTotal.textContent = `${fmt(strokeTotal,3)} m`;
+  ui.out_actLen.textContent = fmtLenFromMeters(actLen, p.geomUnits, 3);
+  ui.out_strokeUsed.textContent = fmtLenFromMeters(strokeUsed, p.geomUnits, 3);
+  ui.out_strokeTotal.textContent = fmtLenFromMeters(strokeTotal, p.geomUnits, 3);
 
   ui.out_Wtotal.textContent = `${fmt(Wtotal,1)} N`;
   ui.out_Fact.textContent = `${fmt(Fact,1)} N`;
   ui.out_Fper.textContent = `${fmt(FperAct,1)} N`;
 
-  const warnings = computeWarnings(p, sol, { FperAct });
+  const warnings = computeWarnings(p, sol, { FperAct, actNaN: !Number.isFinite(actLen) });
   renderWarnings(warnings);
 
   // Draw
-  draw(sol);
+  draw(sol, p.geomUnits);
 }
 
 // Animation
@@ -356,7 +483,7 @@ function stopAnim(){
   anim.raf = 0;
 }
 
-// Hook events
+// --- Hook events ---
 [
   ui.L, ui.N, ui.thetaMin, ui.thetaMax,
   ui.platformWidth, ui.baseWidth,
@@ -365,9 +492,35 @@ function stopAnim(){
   ui.frictionPct, ui.SF, ui.nAct
 ].forEach(inp => inp.addEventListener("input", () => update()));
 
+ui.actBase?.addEventListener("change", update);
+ui.actMove?.addEventListener("change", update);
+
+// Convert displayed geometry values when units toggle changes (so design stays same physically)
+ui.geomUnits?.addEventListener("change", () => {
+  const newUnits = ui.geomUnits.value;
+  const oldUnits = lastGeomUnits;
+
+  const L_display = Number(ui.L.value);
+  const platformW_display = Number(ui.platformWidth.value);
+  const baseW_display = Number(ui.baseWidth.value);
+
+  const L_m = toMeters_fromGeomUnits(L_display, oldUnits);
+  const plat_m = toMeters_fromGeomUnits(platformW_display, oldUnits);
+  const base_m = toMeters_fromGeomUnits(baseW_display, oldUnits);
+
+  ui.L.value = fromMeters_toGeomUnits(L_m, newUnits).toFixed(3);
+  ui.platformWidth.value = fromMeters_toGeomUnits(plat_m, newUnits).toFixed(3);
+  ui.baseWidth.value = fromMeters_toGeomUnits(base_m, newUnits).toFixed(3);
+
+  lastGeomUnits = newUnits;
+  update();
+});
+
 ui.btnLift.addEventListener("click", () => { stopAnim(); startAnim(+1); });
 ui.btnLower.addEventListener("click", () => { stopAnim(); startAnim(-1); });
 ui.btnStop.addEventListener("click", () => stopAnim());
 
-// Initial draw
+// Initial setup
+updateGeomLabels(lastGeomUnits);
+refreshActuatorSelects(Math.round(Number(ui.N.value)) || 2);
 update();

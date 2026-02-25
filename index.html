@@ -21,6 +21,14 @@
         <h3>A) Geometry</h3>
 
         <label>
+          Geometry units
+          <select id="geomUnits">
+            <option value="metric" selected>Metric (m)</option>
+            <option value="us">US Customary (in)</option>
+          </select>
+        </label>
+
+        <label id="label_L">
           Arm length L (m)
           <input id="L" type="number" step="0.01" min="0.01" value="0.60">
         </label>
@@ -40,12 +48,12 @@
           <input id="thetaMax" type="number" step="0.1" min="1" max="89" value="70">
         </label>
 
-        <label>
+        <label id="label_platformWidth">
           Platform width (m)
           <input id="platformWidth" type="number" step="0.01" min="0.01" value="1.20">
         </label>
 
-        <label>
+        <label id="label_baseWidth">
           Base width (m)
           <input id="baseWidth" type="number" step="0.01" min="0.01" value="1.20">
         </label>
@@ -89,6 +97,24 @@
           Number of actuators
           <input id="nAct" type="number" step="1" min="1" max="4" value="1">
         </label>
+      </div>
+
+      <div class="group">
+        <h3>Actuator setup</h3>
+
+        <label>
+          Base endpoint (joint)
+          <select id="actBase"></select>
+        </label>
+
+        <label>
+          Moving endpoint (joint)
+          <select id="actMove"></select>
+        </label>
+
+        <div class="small">
+          Actuator length is derived from selected joint coordinates. θ remains the only state variable.
+        </div>
       </div>
 
       <div class="group">
