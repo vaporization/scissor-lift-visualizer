@@ -107,6 +107,16 @@ select{
 }
 
 .row{ display:flex; gap:8px; }
+
+/* NEW: 2-col input row for actuator offsets */
+.row2{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:8px;
+  margin-bottom:10px;
+}
+.row2 label{ margin-bottom:0; }
+
 button{
   flex:1;
   padding:10px 10px;

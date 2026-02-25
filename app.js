@@ -27,6 +27,12 @@ const ui = {
   label_actLen: $("label_actLen"),
   showPointLabels: $("showPointLabels"),
 
+  // NEW: actuator bracket offsets (displayed in geometry units; stored in meters internally)
+  actBaseDx: $("actBaseDx"),
+  actBaseDy: $("actBaseDy"),
+  actMoveDx: $("actMoveDx"),
+  actMoveDy: $("actMoveDy"),
+
   Wpayload: $("Wpayload"),
   Wplatform: $("Wplatform"),
   WarmsStage: $("WarmsStage"),
@@ -206,10 +212,21 @@ function refreshActuatorSelects(N){
   ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
 }
 
-function actuatorLength(sol, baseKey, moveKey){
-  const p1 = getPointByKey(sol, baseKey);
-  const p2 = getPointByKey(sol, moveKey);
-  if(!p1 || !p2) return NaN;
+// NEW: apply bracket offsets in WORLD coordinates (meters)
+function getActuatorWorldEndpoints(sol, baseKey, moveKey, p){
+  const a = getPointByKey(sol, baseKey);
+  const b = getPointByKey(sol, moveKey);
+  if(!a || !b) return null;
+
+  const p1 = { x: a.x + (p?.actBaseDx || 0), y: a.y + (p?.actBaseDy || 0) };
+  const p2 = { x: b.x + (p?.actMoveDx || 0), y: b.y + (p?.actMoveDy || 0) };
+  return { p1, p2 };
+}
+
+function actuatorLength(sol, baseKey, moveKey, p){
+  const ends = getActuatorWorldEndpoints(sol, baseKey, moveKey, p);
+  if(!ends) return NaN;
+  const { p1, p2 } = ends;
   return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
 
@@ -226,8 +243,8 @@ function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
   const H1 = sol1.H;
   const H2 = sol2.H;
 
-  const l1 = actuatorLength(sol1, baseKey, moveKey);
-  const l2 = actuatorLength(sol2, baseKey, moveKey);
+  const l1 = actuatorLength(sol1, baseKey, moveKey, p);
+  const l2 = actuatorLength(sol2, baseKey, moveKey, p);
 
   if(!Number.isFinite(l1) || !Number.isFinite(l2)) return { F: NaN, dldtheta: NaN };
 
@@ -248,7 +265,7 @@ function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
 
   const lenAt = (thetaDeg) => {
     const sol = solveScissor({ L:p.L, N:p.N, thetaDeg });
-    return actuatorLength(sol, baseKey, moveKey);
+    return actuatorLength(sol, baseKey, moveKey, p);
   };
 
   const lenMin = lenAt(thetaMin);
@@ -310,7 +327,7 @@ function el(name, attrs={}){
   return n;
 }
 
-function draw(sol, geomUnits, showLabels){
+function draw(sol, geomUnits, showLabels, p){
   clearScene();
   const { toScreen } = makeViewportTransform(sol);
 
@@ -330,15 +347,14 @@ function draw(sol, geomUnits, showLabels){
     ui.scene.appendChild(el("line", { x1:B.x, y1:B.y, x2:D.x, y2:D.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
   }
 
-  // actuator (optional)
+  // actuator (optional) — NOW uses bracket offsets
   if(ui.actEnable?.checked){
     const baseKey = ui.actBase?.value || "A0";
     const moveKey = ui.actMove?.value || "P0";
-    const p1w = getPointByKey(sol, baseKey);
-    const p2w = getPointByKey(sol, moveKey);
-    if(p1w && p2w){
-      const p1 = toScreen(p1w);
-      const p2 = toScreen(p2w);
+    const ends = getActuatorWorldEndpoints(sol, baseKey, moveKey, p);
+    if(ends){
+      const p1 = toScreen(ends.p1);
+      const p2 = toScreen(ends.p2);
       ui.scene.appendChild(el("line", { x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y, stroke:"#ff9e64", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
       ui.scene.appendChild(el("circle", { cx:p1.x, cy:p1.y, r:7, fill:"#ff9e64" }));
       ui.scene.appendChild(el("circle", { cx:p2.x, cy:p2.y, r:7, fill:"#ff9e64" }));
@@ -346,15 +362,15 @@ function draw(sol, geomUnits, showLabels){
   }
 
   // fixed pivots (A0,B0)
-  for(const p of [sol.stages[0].A, sol.stages[0].B]){
-    const s = toScreen(p);
+  for(const p0 of [sol.stages[0].A, sol.stages[0].B]){
+    const s = toScreen(p0);
     ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:7, fill:"#7aa2f7" }));
   }
 
   // joints
   for(const st of sol.stages){
-    for(const p of [st.A, st.B, st.C, st.D, st.P]){
-      const s = toScreen(p);
+    for(const pj of [st.A, st.B, st.C, st.D, st.P]){
+      const s = toScreen(pj);
       ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:5, fill:"#c3e88d" }));
     }
   }
@@ -364,8 +380,8 @@ function draw(sol, geomUnits, showLabels){
     const pts = getSelectablePointsForStage(sol, i);
     const keys = [`AP_${i}`, `PC_${i}`, `BP_${i}`, `PD_${i}`];
     for(const k of keys){
-      const p = pts[k];
-      const s = toScreen(p);
+      const pnt = pts[k];
+      const s = toScreen(pnt);
       ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:4.5, fill:"#89ddff", opacity:0.95 }));
       if(showLabels){
         ui.scene.appendChild(el("text", { x:s.x+6, y:s.y-6, fill:"#89ddff", "font-size":"12" })).textContent = k;
@@ -401,7 +417,6 @@ function computeWarnings(p, sol, out){
     warnings.push({ kind:"warn", msg:`Low θ (< 10°): expect major force spike near collapse.` });
   }
 
-  // REMOVE platform width vs span warning (platform can overhang)
   // Keep baseWidth warning as a soft feasibility note (since our base pivots are drawn at A0 and B0)
   if(p.baseWidth > sol.w){
     warnings.push({
@@ -465,12 +480,19 @@ function readParams(){
   const actLenDisplay = Number(ui.actLen?.value || 0);
   const actLenM = toMeters_fromGeomUnits(actLenDisplay, geomUnits);
 
+  // NEW: offsets entered in geometry units; convert to meters
+  const actBaseDx = toMeters_fromGeomUnits(Number(ui.actBaseDx?.value || 0), geomUnits);
+  const actBaseDy = toMeters_fromGeomUnits(Number(ui.actBaseDy?.value || 0), geomUnits);
+  const actMoveDx = toMeters_fromGeomUnits(Number(ui.actMoveDx?.value || 0), geomUnits);
+  const actMoveDy = toMeters_fromGeomUnits(Number(ui.actMoveDy?.value || 0), geomUnits);
+
   return {
     geomUnits,
     L, N, thetaMin, thetaMax, thetaDeg,
     platformWidth, baseWidth,
     Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct,
-    actEnabled, actLenM, showLabels
+    actEnabled, actLenM, showLabels,
+    actBaseDx, actBaseDy, actMoveDx, actMoveDy
   };
 }
 
@@ -481,8 +503,8 @@ function setActuatorLenSliderRangeFromThetaLimits(p){
   const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
   const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
-  const lenMin = actuatorLength(solMin, baseKey, moveKey);
-  const lenMax = actuatorLength(solMax, baseKey, moveKey);
+  const lenMin = actuatorLength(solMin, baseKey, moveKey, p);
+  const lenMax = actuatorLength(solMax, baseKey, moveKey, p);
   if(!Number.isFinite(lenMin) || !Number.isFinite(lenMax)) return;
 
   const lo = Math.min(lenMin, lenMax);
@@ -537,9 +559,9 @@ function update(){
   const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
   const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
-  const actLen = actuatorLength(sol, baseKey, moveKey);
-  const actMin = actuatorLength(solMin, baseKey, moveKey);
-  const actMax = actuatorLength(solMax, baseKey, moveKey);
+  const actLen = actuatorLength(sol, baseKey, moveKey, p);
+  const actMin = actuatorLength(solMin, baseKey, moveKey, p);
+  const actMax = actuatorLength(solMax, baseKey, moveKey, p);
 
   const strokeTotal = (Number.isFinite(actMin) && Number.isFinite(actMax)) ? (actMax - actMin) : NaN;
   const strokeUsed  = (Number.isFinite(actLen) && Number.isFinite(actMin)) ? (actLen - actMin) : NaN;
@@ -584,7 +606,7 @@ function update(){
     { actEnabled:p.actEnabled, actClamped:!!actSolve.clamped, actLen, FactVW, FperAct }
   ));
 
-  draw(sol, p.geomUnits, p.showLabels);
+  draw(sol, p.geomUnits, p.showLabels, p);
 }
 
 // Animation
@@ -643,7 +665,10 @@ function stopAnim(){
   ui.platformWidth, ui.baseWidth,
   ui.theta,
   ui.Wpayload, ui.Wplatform, ui.WarmsStage,
-  ui.frictionPct, ui.SF, ui.nAct
+  ui.frictionPct, ui.SF, ui.nAct,
+
+  // NEW: offsets
+  ui.actBaseDx, ui.actBaseDy, ui.actMoveDx, ui.actMoveDy
 ].forEach(inp => inp.addEventListener("input", () => update()));
 
 ui.actEnable?.addEventListener("change", () => { stopAnim(); update(); });
@@ -657,17 +682,33 @@ ui.geomUnits?.addEventListener("change", () => {
   const newUnits = ui.geomUnits.value;
   const oldUnits = lastGeomUnits;
 
+  // preserve physical lengths when switching units
   const L_display = Number(ui.L.value);
   const platformW_display = Number(ui.platformWidth.value);
   const baseW_display = Number(ui.baseWidth.value);
+
+  const baseDx_display = Number(ui.actBaseDx.value);
+  const baseDy_display = Number(ui.actBaseDy.value);
+  const moveDx_display = Number(ui.actMoveDx.value);
+  const moveDy_display = Number(ui.actMoveDy.value);
 
   const L_m = toMeters_fromGeomUnits(L_display, oldUnits);
   const plat_m = toMeters_fromGeomUnits(platformW_display, oldUnits);
   const base_m = toMeters_fromGeomUnits(baseW_display, oldUnits);
 
+  const baseDx_m = toMeters_fromGeomUnits(baseDx_display, oldUnits);
+  const baseDy_m = toMeters_fromGeomUnits(baseDy_display, oldUnits);
+  const moveDx_m = toMeters_fromGeomUnits(moveDx_display, oldUnits);
+  const moveDy_m = toMeters_fromGeomUnits(moveDy_display, oldUnits);
+
   ui.L.value = fromMeters_toGeomUnits(L_m, newUnits).toFixed(3);
   ui.platformWidth.value = fromMeters_toGeomUnits(plat_m, newUnits).toFixed(3);
   ui.baseWidth.value = fromMeters_toGeomUnits(base_m, newUnits).toFixed(3);
+
+  ui.actBaseDx.value = fromMeters_toGeomUnits(baseDx_m, newUnits).toFixed(3);
+  ui.actBaseDy.value = fromMeters_toGeomUnits(baseDy_m, newUnits).toFixed(3);
+  ui.actMoveDx.value = fromMeters_toGeomUnits(moveDx_m, newUnits).toFixed(3);
+  ui.actMoveDy.value = fromMeters_toGeomUnits(moveDy_m, newUnits).toFixed(3);
 
   lastGeomUnits = newUnits;
   update();
