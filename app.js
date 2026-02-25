@@ -36,15 +36,15 @@ const ui = {
   label_actLen: $("label_actLen"),
   showPointLabels: $("showPointLabels"),
 
-  // ✅ actuator endpoint offsets (tangent/normal, in geom units)
-  actBaseOffT: $("actBaseOffT"),
-  actBaseOffN: $("actBaseOffN"),
-  actMoveOffT: $("actMoveOffT"),
-  actMoveOffN: $("actMoveOffN"),
-  label_actBaseOffT: $("label_actBaseOffT"),
-  label_actBaseOffN: $("label_actBaseOffN"),
-  label_actMoveOffT: $("label_actMoveOffT"),
-  label_actMoveOffN: $("label_actMoveOffN"),
+  // ✅ actuator endpoint offsets (WORLD X/Y, in geom units)
+  actBaseOffX: $("actBaseOffX"),
+  actBaseOffY: $("actBaseOffY"),
+  actMoveOffX: $("actMoveOffX"),
+  actMoveOffY: $("actMoveOffY"),
+  label_actBaseOffX: $("label_actBaseOffX"),
+  label_actBaseOffY: $("label_actBaseOffY"),
+  label_actMoveOffX: $("label_actMoveOffX"),
+  label_actMoveOffY: $("label_actMoveOffY"),
 
   Wpayload: $("Wpayload"),
   Wplatform: $("Wplatform"),
@@ -106,10 +106,10 @@ function updateGeomLabels(units){
   setLabelText(ui.label_topXOffset, `Top X offset (${u}) — slide top platform left/right`);
 
   setLabelText(ui.label_actLen, `Actuator length (${u}) — driving input (when actuator ON)`);
-  setLabelText(ui.label_actBaseOffT, `Base endpoint offset along arm (${u})`);
-  setLabelText(ui.label_actBaseOffN, `Base endpoint offset off arm / normal (${u})`);
-  setLabelText(ui.label_actMoveOffT, `Moving endpoint offset along arm (${u})`);
-  setLabelText(ui.label_actMoveOffN, `Moving endpoint offset off arm / normal (${u})`);
+  setLabelText(ui.label_actBaseOffX, `Base endpoint X offset (${u})`);
+  setLabelText(ui.label_actBaseOffY, `Base endpoint Y offset (${u})`);
+  setLabelText(ui.label_actMoveOffX, `Moving endpoint X offset (${u})`);
+  setLabelText(ui.label_actMoveOffY, `Moving endpoint Y offset (${u})`);
 }
 
 // -------------------- Units (Loads/Forces) --------------------
@@ -271,66 +271,16 @@ function refreshActuatorSelects(N){
   ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
 }
 
-// -------------------- ✅ Actuator endpoint offsets in local arm frame --------------------
-function norm2(vx, vy){
-  const m = Math.hypot(vx, vy);
-  if(m < 1e-12) return {x:1, y:0};
-  return {x:vx/m, y:vy/m};
-}
-
-// Decide which arm “owns” a selectable point (for tangent/normal direction)
-function armFrameForKey(sol, key){
-  // key determines stage index
-  let idx = null;
-  if(key.includes("_")) idx = Number(key.split("_").at(-1));
-  else idx = Number(key.slice(1));
-  if(!Number.isFinite(idx) || idx < 0 || idx >= sol.stages.length) return null;
-
-  const st = sol.stages[idx];
-  const A = st.A, B = st.B, C = st.C, D = st.D, P = st.P;
-
-  const onAC =
-    /^A\d+$/.test(key) || /^C\d+$/.test(key) || /^AP_\d+$/.test(key) || /^PC_\d+$/.test(key);
-  const onBD =
-    /^B\d+$/.test(key) || /^D\d+$/.test(key) || /^BP_\d+$/.test(key) || /^PD_\d+$/.test(key);
-
-  if(onAC){
-    const t = norm2(C.x - A.x, C.y - A.y);
-    const n = { x: -t.y, y: t.x };
-    return { t, n };
-  }
-  if(onBD){
-    const t = norm2(D.x - B.x, D.y - B.y);
-    const n = { x: -t.y, y: t.x };
-    return { t, n };
-  }
-
-  // Center joint P: use averaged “up-ish” direction so offsets still behave sensibly
-  if(/^P\d+$/.test(key)){
-    const v1 = norm2(C.x - A.x, C.y - A.y);
-    const v2 = norm2(D.x - B.x, D.y - B.y);
-    const t = norm2(v1.x + v2.x, v1.y + v2.y); // tends toward vertical
-    const n = { x: -t.y, y: t.x };
-    return { t, n };
-  }
-
-  return null;
-}
-
-function pointWithOffsets(sol, key, offT, offN){
+// -------------------- ✅ Actuator endpoint offsets (WORLD X/Y) --------------------
+function pointWithXYOffset(sol, key, offX, offY){
   const p = getPointByKey(sol, key);
   if(!p) return null;
-  const frame = armFrameForKey(sol, key);
-  if(!frame) return p;
-  return {
-    x: p.x + frame.t.x * offT + frame.n.x * offN,
-    y: p.y + frame.t.y * offT + frame.n.y * offN
-  };
+  return { x: p.x + offX, y: p.y + offY };
 }
 
-function actuatorLength(sol, baseKey, moveKey, baseOffT, baseOffN, moveOffT, moveOffN){
-  const p1 = pointWithOffsets(sol, baseKey, baseOffT, baseOffN);
-  const p2 = pointWithOffsets(sol, moveKey, moveOffT, moveOffN);
+function actuatorLength(sol, baseKey, moveKey, baseOffX, baseOffY, moveOffX, moveOffY){
+  const p1 = pointWithXYOffset(sol, baseKey, baseOffX, baseOffY);
+  const p2 = pointWithXYOffset(sol, moveKey, moveOffX, moveOffY);
   if(!p1 || !p2) return NaN;
   return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
@@ -352,8 +302,8 @@ function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
     baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
   });
 
-  const l1 = actuatorLength(sol1, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
-  const l2 = actuatorLength(sol2, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
+  const l1 = actuatorLength(sol1, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
+  const l2 = actuatorLength(sol2, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
 
   if(!Number.isFinite(l1) || !Number.isFinite(l2)) return { F: NaN };
 
@@ -376,7 +326,7 @@ function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
       baseWidth:p.baseWidth, platformWidth:p.platformWidth,
       baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
     });
-    return actuatorLength(sol, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
+    return actuatorLength(sol, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
   };
 
   const lenMin = lenAt(thetaMin);
@@ -462,8 +412,8 @@ function draw(sol, geomUnits, showLabels, p){
     const baseKey = ui.actBase?.value || "A0";
     const moveKey = ui.actMove?.value || "P0";
 
-    const p1w = pointWithOffsets(sol, baseKey, p.actBaseOffT, p.actBaseOffN);
-    const p2w = pointWithOffsets(sol, moveKey, p.actMoveOffT, p.actMoveOffN);
+    const p1w = pointWithXYOffset(sol, baseKey, p.actBaseOffX, p.actBaseOffY);
+    const p2w = pointWithXYOffset(sol, moveKey, p.actMoveOffX, p.actMoveOffY);
 
     if(p1w && p2w){
       const p1 = toScreen(p1w);
@@ -586,10 +536,10 @@ function readParams(){
   const topXOffset  = toMeters_fromGeomUnits(Number(ui.topXOffset?.value || 0), geomUnits);
 
   // ✅ actuator endpoint offsets (geom units -> meters)
-  const actBaseOffT = toMeters_fromGeomUnits(Number(ui.actBaseOffT?.value || 0), geomUnits);
-  const actBaseOffN = toMeters_fromGeomUnits(Number(ui.actBaseOffN?.value || 0), geomUnits);
-  const actMoveOffT = toMeters_fromGeomUnits(Number(ui.actMoveOffT?.value || 0), geomUnits);
-  const actMoveOffN = toMeters_fromGeomUnits(Number(ui.actMoveOffN?.value || 0), geomUnits);
+  const actBaseOffX = toMeters_fromGeomUnits(Number(ui.actBaseOffX?.value || 0), geomUnits);
+  const actBaseOffY = toMeters_fromGeomUnits(Number(ui.actBaseOffY?.value || 0), geomUnits);
+  const actMoveOffX = toMeters_fromGeomUnits(Number(ui.actMoveOffX?.value || 0), geomUnits);
+  const actMoveOffY = toMeters_fromGeomUnits(Number(ui.actMoveOffY?.value || 0), geomUnits);
 
   const Wpayload = toNewtons_fromLoadUnits(Number(ui.Wpayload.value), loadUnits);
   const Wplatform = toNewtons_fromLoadUnits(Number(ui.Wplatform.value), loadUnits);
@@ -609,7 +559,7 @@ function readParams(){
     geomUnits, loadUnits,
     L, N, thetaMin, thetaMax, thetaDeg,
     platformWidth, baseWidth, baseXOffset, topXOffset,
-    actBaseOffT, actBaseOffN, actMoveOffT, actMoveOffN,
+    actBaseOffX, actBaseOffY, actMoveOffX, actMoveOffY,
     Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct,
     actEnabled, actLenM, showLabels
   };
@@ -630,8 +580,8 @@ function setActuatorLenSliderRangeFromThetaLimits(p){
     baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
   });
 
-  const lenMin = actuatorLength(solMin, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
-  const lenMax = actuatorLength(solMax, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
+  const lenMin = actuatorLength(solMin, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
+  const lenMax = actuatorLength(solMax, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
   if(!Number.isFinite(lenMin) || !Number.isFinite(lenMax)) return;
 
   const lo = Math.min(lenMin, lenMax);
@@ -694,9 +644,9 @@ function update(){
     baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
   });
 
-  const actLen = actuatorLength(sol, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
-  const actMin = actuatorLength(solMin, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
-  const actMax = actuatorLength(solMax, baseKey, moveKey, p.actBaseOffT, p.actBaseOffN, p.actMoveOffT, p.actMoveOffN);
+  const actLen = actuatorLength(sol, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
+  const actMin = actuatorLength(solMin, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
+  const actMax = actuatorLength(solMax, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
 
   const strokeTotal = (Number.isFinite(actMin) && Number.isFinite(actMax)) ? (actMax - actMin) : NaN;
   const strokeUsed  = (Number.isFinite(actLen) && Number.isFinite(actMin)) ? (actLen - actMin) : NaN;
@@ -795,7 +745,9 @@ function stopAnim(){
   ui.L, ui.N, ui.thetaMin, ui.thetaMax,
   ui.platformWidth, ui.baseWidth,
   ui.baseXOffset, ui.topXOffset,
-  ui.actBaseOffT, ui.actBaseOffN, ui.actMoveOffT, ui.actMoveOffN,
+
+  ui.actBaseOffX, ui.actBaseOffY, ui.actMoveOffX, ui.actMoveOffY,
+
   ui.theta,
   ui.Wpayload, ui.Wplatform, ui.WarmsStage,
   ui.frictionPct, ui.SF, ui.nAct
@@ -813,7 +765,11 @@ ui.geomUnits?.addEventListener("change", () => {
   const newUnits = ui.geomUnits.value;
   const oldUnits = lastGeomUnits;
 
-  const convIds = ["L","platformWidth","baseWidth","baseXOffset","topXOffset","actBaseOffT","actBaseOffN","actMoveOffT","actMoveOffN"];
+  const convIds = [
+    "L","platformWidth","baseWidth","baseXOffset","topXOffset",
+    "actBaseOffX","actBaseOffY","actMoveOffX","actMoveOffY"
+  ];
+
   for(const id of convIds){
     const el = $(id);
     if(!el) continue;
