@@ -9,7 +9,7 @@
 <body>
   <header class="topbar">
     <div class="title">Scissor Lift Visualizer (2D)</div>
-    <div class="subtitle">θ-driven geometry • actuator derived • force trends + warnings</div>
+    <div class="subtitle">θ-driven geometry • actuator optional • actuator can drive motion</div>
   </header>
 
   <main class="layout">
@@ -59,7 +59,7 @@
         </label>
 
         <label>
-          θ (deg) — state variable
+          θ (deg) — state variable (when actuator OFF)
           <input id="theta" type="range" min="10" max="70" step="0.1" value="25">
           <div class="small"><span id="thetaReadout">25.0</span>°</div>
         </label>
@@ -100,20 +100,37 @@
       </div>
 
       <div class="group">
-        <h3>Actuator setup</h3>
+        <h3>Actuator</h3>
+
+        <label class="checkrow">
+          <input id="actEnable" type="checkbox">
+          Enable actuator (drive motion by actuator length)
+        </label>
 
         <label>
-          Base endpoint (joint)
+          Base endpoint (selectable point)
           <select id="actBase"></select>
         </label>
 
         <label>
-          Moving endpoint (joint)
+          Moving endpoint (selectable point)
           <select id="actMove"></select>
         </label>
 
+        <label id="label_actLen">
+          Actuator length (m) — driving input (when actuator ON)
+          <input id="actLen" type="range" min="0" max="1" step="0.001" value="0.5">
+          <div class="small"><span id="actLenReadout">—</span></div>
+        </label>
+
+        <label class="checkrow">
+          <input id="showPointLabels" type="checkbox" checked>
+          Show selectable point labels
+        </label>
+
         <div class="small">
-          Actuator length is derived from selected joint coordinates. θ remains the only state variable.
+          Points include joints (A/B/C/D/P) and half-link midpoints (the “blue circled” zones).
+          When enabled, motion solves θ from actuator length.
         </div>
       </div>
 
@@ -139,6 +156,7 @@
       <div class="legend">
         <span class="dot fixed"></span> fixed pivot
         <span class="dot joint"></span> joint
+        <span class="dot point"></span> selectable point
         <span class="line arms"></span> arms
         <span class="line actuator"></span> actuator
         <span class="line platform"></span> platforms
@@ -157,7 +175,8 @@
       </div>
 
       <div class="group">
-        <h3>Actuator (derived)</h3>
+        <h3>Actuator</h3>
+        <div class="kv"><span>Enabled</span><span id="out_actEnabled">—</span></div>
         <div class="kv"><span>Length</span><span id="out_actLen">—</span></div>
         <div class="kv"><span>Stroke used</span><span id="out_strokeUsed">—</span></div>
         <div class="kv"><span>Stroke total</span><span id="out_strokeTotal">—</span></div>
@@ -178,7 +197,7 @@
   </main>
 
   <footer class="footer">
-    Geometry-first: solve θ → everything else follows.
+    Geometry-first: solve θ → everything else follows. If actuator enabled: solve θ from actuator length.
   </footer>
 
   <script src="app.js"></script>

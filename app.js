@@ -1,5 +1,5 @@
 // Scissor Lift Visualizer (2D) — θ-driven geometry
-// Mental model: solve θ → geometry forces everything else into place.
+// Rule: θ is the mechanism state. If actuator enabled, we solve θ from actuator length.
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,15 +13,18 @@ const ui = {
   theta: $("theta"),
   thetaReadout: $("thetaReadout"),
 
-  // Geometry units toggle
   geomUnits: $("geomUnits"),
   label_L: $("label_L"),
   label_platformWidth: $("label_platformWidth"),
   label_baseWidth: $("label_baseWidth"),
 
-  // Actuator attachment selectors
+  actEnable: $("actEnable"),
   actBase: $("actBase"),
   actMove: $("actMove"),
+  actLen: $("actLen"),
+  actLenReadout: $("actLenReadout"),
+  label_actLen: $("label_actLen"),
+  showPointLabels: $("showPointLabels"),
 
   Wpayload: $("Wpayload"),
   Wplatform: $("Wplatform"),
@@ -34,6 +37,7 @@ const ui = {
   out_H: $("out_H"),
   out_w: $("out_w"),
 
+  out_actEnabled: $("out_actEnabled"),
   out_actLen: $("out_actLen"),
   out_strokeUsed: $("out_strokeUsed"),
   out_strokeTotal: $("out_strokeTotal"),
@@ -53,7 +57,6 @@ const ui = {
 };
 
 const DEG2RAD = Math.PI / 180;
-
 function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
 function fmt(x, digits=3){ return Number.isFinite(x) ? x.toFixed(digits) : "—"; }
 
@@ -61,25 +64,20 @@ function fmt(x, digits=3){ return Number.isFinite(x) ? x.toFixed(digits) : "—"
 const M_PER_IN = 0.0254;
 let lastGeomUnits = ui.geomUnits?.value || "metric";
 
-function toMeters_fromGeomUnits(val, units){
-  return units === "us" ? (val * M_PER_IN) : val;
-}
-function fromMeters_toGeomUnits(m, units){
-  return units === "us" ? (m / M_PER_IN) : m;
-}
-function unitLabel(units){
-  return units === "us" ? "in" : "m";
-}
+function toMeters_fromGeomUnits(val, units){ return units === "us" ? (val * M_PER_IN) : val; }
+function fromMeters_toGeomUnits(m, units){ return units === "us" ? (m / M_PER_IN) : m; }
+function unitLabel(units){ return units === "us" ? "in" : "m"; }
 function fmtLenFromMeters(m, units, digits=3){
   const v = fromMeters_toGeomUnits(m, units);
   return `${v.toFixed(digits)} ${unitLabel(units)}`;
 }
 function updateGeomLabels(units){
-  // Keep labels aligned with current geometry units
   const u = unitLabel(units);
   if(ui.label_L) ui.label_L.firstChild.textContent = `\n          Arm length L (${u})\n          `;
   if(ui.label_platformWidth) ui.label_platformWidth.firstChild.textContent = `\n          Platform width (${u})\n          `;
   if(ui.label_baseWidth) ui.label_baseWidth.firstChild.textContent = `\n          Base width (${u})\n          `;
+  if(ui.label_actLen) ui.label_actLen.firstChild.textContent =
+    `\n          Actuator length (${u}) — driving input (when actuator ON)\n          `;
 }
 
 // --- Geometry Solver ---
@@ -106,51 +104,92 @@ function solveScissor({ L, N, thetaDeg }){
   return { theta, h, w, H, stages, bottomPlatform, topPlatform };
 }
 
-// --- Joint key system for actuator endpoints ---
-function getJointByKey(sol, key){
-  if(!key || key.length < 2) return null;
-  const joint = key[0];
-  const idx = Number(key.slice(1));
-  if(!Number.isFinite(idx) || idx < 0 || idx >= sol.stages.length) return null;
+// --- Selectable point model ---
+// We include joints: A,B,C,D,P
+// AND half-link midpoints (blue circled zones):
+// On diagonal A->C: midpoint between A and P (t=0.25), and between P and C (t=0.75)
+// On diagonal B->D: midpoint between B and P (t=0.25), and between P and D (t=0.75)
+function lerpPoint(p1, p2, t){ return { x: p1.x + (p2.x-p1.x)*t, y: p1.y + (p2.y-p1.y)*t }; }
 
-  const st = sol.stages[idx];
-  switch(joint){
-    case "A": return st.A;
-    case "B": return st.B;
-    case "C": return st.C;
-    case "D": return st.D;
-    case "P": return st.P;
-    default: return null;
+function getSelectablePointsForStage(sol, i){
+  const st = sol.stages[i];
+  const A = st.A, B = st.B, C = st.C, D = st.D, P = st.P;
+
+  // diagonals
+  const AC_25 = lerpPoint(A, C, 0.25);
+  const AC_75 = lerpPoint(A, C, 0.75);
+  const BD_25 = lerpPoint(B, D, 0.25);
+  const BD_75 = lerpPoint(B, D, 0.75);
+
+  return {
+    // joints
+    [`A${i}`]: A,
+    [`B${i}`]: B,
+    [`C${i}`]: C,
+    [`D${i}`]: D,
+    [`P${i}`]: P,
+
+    // half-link midpoints (the circled areas)
+    [`AC25_${i}`]: AC_25,
+    [`AC75_${i}`]: AC_75,
+    [`BD25_${i}`]: BD_25,
+    [`BD75_${i}`]: BD_75,
+  };
+}
+
+function getPointByKey(sol, key){
+  if(!key) return null;
+  // keys: A0, P1, AC25_0, BD75_1, etc
+  // Determine stage index by trailing _i or last digits
+  // For joints: last char(s) are digits.
+  // For midpoints: format XX##_i
+  let stageIdx = null;
+
+  if(key.includes("_")){
+    const parts = key.split("_");
+    stageIdx = Number(parts[parts.length - 1]);
+  } else {
+    stageIdx = Number(key.slice(1));
   }
+
+  if(!Number.isFinite(stageIdx) || stageIdx < 0 || stageIdx >= sol.stages.length) return null;
+
+  const map = getSelectablePointsForStage(sol, stageIdx);
+  return map[key] || null;
 }
 
-function labelForJointKey(key){
-  const j = key[0];
-  const i = key.slice(1);
-  const name =
-    j === "A" ? "Bottom-Left" :
-    j === "B" ? "Bottom-Right" :
-    j === "C" ? "Top-Right" :
-    j === "D" ? "Top-Left" :
-    j === "P" ? "Center" : j;
-  return `${name} (stage ${i})`;
+function pointLabel(key){
+  // Friendly label in dropdown
+  if(/^A\d+$/.test(key)) return `${key} — Bottom-Left joint`;
+  if(/^B\d+$/.test(key)) return `${key} — Bottom-Right joint`;
+  if(/^C\d+$/.test(key)) return `${key} — Top-Right joint`;
+  if(/^D\d+$/.test(key)) return `${key} — Top-Left joint`;
+  if(/^P\d+$/.test(key)) return `${key} — Center joint`;
+
+  if(/^AC25_\d+$/.test(key)) return `${key} — Mid(A→P) on diagonal A–C`;
+  if(/^AC75_\d+$/.test(key)) return `${key} — Mid(P→C) on diagonal A–C`;
+  if(/^BD25_\d+$/.test(key)) return `${key} — Mid(B→P) on diagonal B–D`;
+  if(/^BD75_\d+$/.test(key)) return `${key} — Mid(P→D) on diagonal B–D`;
+
+  return key;
 }
 
-function buildJointOptions(N){
-  const joints = ["A","B","P","D","C"]; // display order
+function buildSelectableKeyList(N){
   const keys = [];
   for(let i=0; i<N; i++){
-    for(const j of joints) keys.push(`${j}${i}`);
+    // joints first
+    keys.push(`A${i}`, `B${i}`, `P${i}`, `D${i}`, `C${i}`);
+    // then half-link midpoints (the new ones)
+    keys.push(`AC25_${i}`, `AC75_${i}`, `BD25_${i}`, `BD75_${i}`);
   }
   return keys;
 }
 
 function refreshActuatorSelects(N){
-  if(!ui.actBase || !ui.actMove) return;
+  const keys = buildSelectableKeyList(N);
 
-  const keys = buildJointOptions(N);
-  const prevBase = ui.actBase.value || "A0";
-  const prevMove = ui.actMove.value || "P0";
+  const prevBase = ui.actBase?.value || `A0`;
+  const prevMove = ui.actMove?.value || (N >= 2 ? `P1` : `P0`);
 
   ui.actBase.innerHTML = "";
   ui.actMove.innerHTML = "";
@@ -158,35 +197,77 @@ function refreshActuatorSelects(N){
   for(const k of keys){
     const o1 = document.createElement("option");
     o1.value = k;
-    o1.textContent = `${k} — ${labelForJointKey(k)}`;
+    o1.textContent = pointLabel(k);
     ui.actBase.appendChild(o1);
 
     const o2 = document.createElement("option");
     o2.value = k;
-    o2.textContent = `${k} — ${labelForJointKey(k)}`;
+    o2.textContent = pointLabel(k);
     ui.actMove.appendChild(o2);
   }
 
-  ui.actBase.value = keys.includes(prevBase) ? prevBase : "A0";
-  ui.actMove.value = keys.includes(prevMove) ? prevMove : "P0";
-
-  // Nice default for 2+ stages: push on an inner stage center
-  if(N >= 2 && ui.actMove.value === "P0"){
-    ui.actMove.value = "P1";
-  }
+  ui.actBase.value = keys.includes(prevBase) ? prevBase : `A0`;
+  ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
 }
 
-// Actuator length derived from selected joints
+// Actuator length derived from selected points
 function actuatorLength(sol, baseKey, moveKey){
-  const p1 = getJointByKey(sol, baseKey);
-  const p2 = getJointByKey(sol, moveKey);
+  const p1 = getPointByKey(sol, baseKey);
+  const p2 = getPointByKey(sol, moveKey);
   if(!p1 || !p2) return NaN;
   return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
 
-// Force trend model (given): Fact ≈ N * Wtotal * tan(theta)
+// Force trend model (still your original approximation)
 function forceTrend({ N, thetaRad, Wtotal }){
   return N * Wtotal * Math.tan(thetaRad);
+}
+
+// --- Inverse solve: θ from actuator length ---
+// We assume length is monotonic over [θmin, θmax] for typical placements.
+// If not, we do a coarse scan then local binary search around best.
+function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
+  const thetaMin = p.thetaMin;
+  const thetaMax = p.thetaMax;
+
+  // helper to evaluate actuator length at theta
+  const lenAt = (thetaDeg) => {
+    const sol = solveScissor({ L:p.L, N:p.N, thetaDeg });
+    return actuatorLength(sol, baseKey, moveKey);
+  };
+
+  const lenMin = lenAt(thetaMin);
+  const lenMax = lenAt(thetaMax);
+
+  if(!Number.isFinite(lenMin) || !Number.isFinite(lenMax)) return { thetaDeg: thetaMin, ok:false, reason:"invalid endpoints" };
+
+  // Determine monotonic direction
+  const increasing = lenMax > lenMin;
+
+  // Clamp target into achievable range
+  const lo = Math.min(lenMin, lenMax);
+  const hi = Math.max(lenMin, lenMax);
+  let clamped = false;
+  let tLen = targetLenM;
+  if(tLen < lo){ tLen = lo; clamped = true; }
+  if(tLen > hi){ tLen = hi; clamped = true; }
+
+  // Binary search if monotonic
+  let a = thetaMin, b = thetaMax;
+  for(let iter=0; iter<40; iter++){
+    const mid = 0.5*(a+b);
+    const lm = lenAt(mid);
+    if(!Number.isFinite(lm)) break;
+
+    if(increasing){
+      if(lm < tLen) a = mid; else b = mid;
+    } else {
+      if(lm > tLen) a = mid; else b = mid;
+    }
+  }
+
+  const thetaDeg = 0.5*(a+b);
+  return { thetaDeg, ok:true, clamped, lenMin, lenMax };
 }
 
 // Rendering: map world coords to svg coords
@@ -227,7 +308,7 @@ function el(name, attrs={}){
   return n;
 }
 
-function draw(sol, geomUnits){
+function draw(sol, geomUnits, showLabels){
   clearScene();
   const { toScreen } = makeViewportTransform(sol);
 
@@ -261,19 +342,24 @@ function draw(sol, geomUnits){
     }));
   }
 
-  // Actuator (derived): selected joints
-  const baseKey = ui.actBase?.value || "A0";
-  const moveKey = ui.actMove?.value || "P0";
-  const p1w = getJointByKey(sol, baseKey);
-  const p2w = getJointByKey(sol, moveKey);
+  // Actuator (optional)
+  if(ui.actEnable?.checked){
+    const baseKey = ui.actBase?.value || "A0";
+    const moveKey = ui.actMove?.value || "P0";
+    const p1w = getPointByKey(sol, baseKey);
+    const p2w = getPointByKey(sol, moveKey);
+    if(p1w && p2w){
+      const p1 = toScreen(p1w);
+      const p2 = toScreen(p2w);
+      ui.scene.appendChild(el("line", {
+        x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
+        stroke:"#ff9e64", "stroke-width": 6, "stroke-linecap":"round", opacity:0.95
+      }));
 
-  if(p1w && p2w){
-    const p1 = toScreen(p1w);
-    const p2 = toScreen(p2w);
-    ui.scene.appendChild(el("line", {
-      x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
-      stroke:"#ff9e64", "stroke-width": 6, "stroke-linecap":"round", opacity:0.95
-    }));
+      // highlight endpoints
+      ui.scene.appendChild(el("circle", { cx:p1.x, cy:p1.y, r:7, fill:"#ff9e64" }));
+      ui.scene.appendChild(el("circle", { cx:p2.x, cy:p2.y, r:7, fill:"#ff9e64" }));
+    }
   }
 
   // Joints (pivots)
@@ -293,6 +379,24 @@ function draw(sol, geomUnits){
     }
   }
 
+  // Draw selectable midpoints (blue circled zones)
+  for(let i=0; i<sol.stages.length; i++){
+    const pts = getSelectablePointsForStage(sol, i);
+    // only midpoint keys (not joints)
+    const keys = [`AC25_${i}`, `AC75_${i}`, `BD25_${i}`, `BD75_${i}`];
+    for(const k of keys){
+      const p = pts[k];
+      const s = toScreen(p);
+      ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:4.5, fill:"#89ddff", opacity:0.95 }));
+      if(showLabels){
+        ui.scene.appendChild(el("text", {
+          x: s.x + 6, y: s.y - 6,
+          fill:"#89ddff", "font-size":"12"
+        })).textContent = k;
+      }
+    }
+  }
+
   // Labels (simple)
   ui.scene.appendChild(el("text", {
     x: tpL.x, y: tpL.y - 12, fill:"#a9b1c3", "font-size":"14"
@@ -305,48 +409,41 @@ function draw(sol, geomUnits){
 
 function computeWarnings(params, sol, outputs){
   const warnings = [];
-
   const thetaDeg = params.thetaDeg;
   const thetaMin = params.thetaMin;
-  const thetaMax = params.thetaMax;
   const units = params.geomUnits;
 
-  // Singularity proximity
   if(thetaDeg < thetaMin + 2){
     warnings.push({ kind:"bad", msg:`θ is very close to θ_min. Near-collapse region: force sensitivity is high.` });
   } else if(thetaDeg < 10){
     warnings.push({ kind:"warn", msg:`Low θ (< 10°): expect major force spike near collapse.` });
   }
 
-  // Platform/base fit vs span (all internal meters; display in chosen units)
   if(params.platformWidth > sol.w){
     warnings.push({
       kind:"bad",
-      msg:`Platform width (${fromMeters_toGeomUnits(params.platformWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}). Geometry/mounting mismatch.`
+      msg:`Platform width (${fromMeters_toGeomUnits(params.platformWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}).`
     });
   }
   if(params.baseWidth > sol.w){
     warnings.push({
       kind:"warn",
-      msg:`Base width (${fromMeters_toGeomUnits(params.baseWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}). Check bottom pivot mounting feasibility.`
+      msg:`Base width (${fromMeters_toGeomUnits(params.baseWidth, units).toFixed(2)} ${unitLabel(units)}) exceeds scissor span w (${fromMeters_toGeomUnits(sol.w, units).toFixed(2)} ${unitLabel(units)}).`
     });
   }
 
-  // Angle sanity
-  if(thetaMin >= thetaMax){
-    warnings.push({ kind:"bad", msg:`θ_min must be < θ_max.` });
-  }
-
-  // Force reasonableness (basic heuristic)
   if(outputs.FperAct > 50000){
-    warnings.push({ kind:"bad", msg:`Per-actuator force is extremely high (>50 kN). This configuration is likely impractical.` });
+    warnings.push({ kind:"bad", msg:`Per-actuator force is extremely high (>50 kN).` });
   } else if(outputs.FperAct > 20000){
-    warnings.push({ kind:"warn", msg:`Per-actuator force is high (>20 kN). Consider raising θ_min, reducing load, or changing actuator geometry.` });
+    warnings.push({ kind:"warn", msg:`Per-actuator force is high (>20 kN).` });
   }
 
-  // Actuator joint selection sanity
-  if(outputs.actNaN){
-    warnings.push({ kind:"bad", msg:`Actuator length is invalid. Check actuator endpoint selections.` });
+  if(outputs.actEnabled && outputs.actClamped){
+    warnings.push({ kind:"warn", msg:`Requested actuator length was outside achievable range for this placement; it was clamped to match θ limits.` });
+  }
+
+  if(outputs.actEnabled && outputs.actInvalid){
+    warnings.push({ kind:"bad", msg:`Actuator endpoints invalid for current stage count.` });
   }
 
   if(warnings.length === 0){
@@ -369,13 +466,11 @@ function readParams(){
   const geomUnits = ui.geomUnits?.value || "metric";
   updateGeomLabels(geomUnits);
 
-  // Geometry inputs are displayed in selected units; convert to meters internally
   const L = toMeters_fromGeomUnits(Number(ui.L.value), geomUnits);
   const N = Math.round(Number(ui.N.value));
   const thetaMin = Number(ui.thetaMin.value);
   const thetaMax = Number(ui.thetaMax.value);
 
-  // Sync slider bounds with min/max
   ui.theta.min = String(thetaMin);
   ui.theta.max = String(thetaMax);
 
@@ -394,35 +489,114 @@ function readParams(){
   const SF = Number(ui.SF.value);
   const nAct = Math.max(1, Math.round(Number(ui.nAct.value)));
 
+  const actEnabled = !!ui.actEnable?.checked;
+  const showLabels = !!ui.showPointLabels?.checked;
+
+  // Actuator length slider is stored/displayed in geometry units; convert to meters internally
+  const actLenDisplay = Number(ui.actLen?.value || 0);
+  const actLenM = toMeters_fromGeomUnits(actLenDisplay, geomUnits);
+
   return {
     geomUnits,
     L, N, thetaMin, thetaMax, thetaDeg,
     platformWidth, baseWidth,
-    Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct
+    Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct,
+    actEnabled, actLenM, showLabels
   };
 }
 
-function update(){
-  const p = readParams();
+function setActuatorLenSliderRangeFromThetaLimits(p){
+  // When endpoints change, we should compute achievable actuator length range
+  // across [θmin, θmax] and map that to the actuator length slider.
+  const baseKey = ui.actBase?.value || "A0";
+  const moveKey = ui.actMove?.value || "P0";
 
-  // Ensure actuator joint dropdowns reflect current N (and keep selection when possible)
-  refreshActuatorSelects(p.N);
-
-  const sol = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaDeg });
-
-  // Derived actuator lengths across travel for stroke
   const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
   const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
+  const lenMin = actuatorLength(solMin, baseKey, moveKey);
+  const lenMax = actuatorLength(solMax, baseKey, moveKey);
+
+  if(!Number.isFinite(lenMin) || !Number.isFinite(lenMax)) return;
+
+  const lo = Math.min(lenMin, lenMax);
+  const hi = Math.max(lenMin, lenMax);
+
+  // slider in selected display units
+  const loDisp = fromMeters_toGeomUnits(lo, p.geomUnits);
+  const hiDisp = fromMeters_toGeomUnits(hi, p.geomUnits);
+
+  ui.actLen.min = String(loDisp);
+  ui.actLen.max = String(hiDisp);
+
+  // keep within range
+  let v = Number(ui.actLen.value);
+  v = clamp(v, loDisp, hiDisp);
+  ui.actLen.value = String(v);
+}
+
+function updateDriveUI(p){
+  // If actuator enabled, actuator length drives. θ slider becomes read-only feel.
+  ui.theta.disabled = p.actEnabled;
+  ui.actLen.disabled = !p.actEnabled;
+
+  // Show readout of actuator length with units
+  const disp = fromMeters_toGeomUnits(p.actLenM, p.geomUnits);
+  ui.actLenReadout.textContent = `${disp.toFixed(3)} ${unitLabel(p.geomUnits)}`;
+}
+
+function update(){
+  const p0 = readParams();
+
+  // Refresh actuator point lists whenever N changes (includes blue circled points)
+  refreshActuatorSelects(p0.N);
+
+  // Update actuator length slider min/max based on current endpoints and θ limits
+  setActuatorLenSliderRangeFromThetaLimits(p0);
+
+  // Re-read params after slider range adjust (so actLenM matches clamped)
+  const p = readParams();
+  updateDriveUI(p);
+
   const baseKey = ui.actBase?.value || "A0";
-  const moveKey = ui.actMove?.value || "P0";
+  const moveKey = ui.actMove?.value || (p.N >= 2 ? "P1" : "P0");
+
+  // Determine θ:
+  // - If actuator OFF: θ comes from θ slider
+  // - If actuator ON: θ is solved from actuator length
+  let thetaDeg = p.thetaDeg;
+  let actSolve = { ok:true, clamped:false, reason:"" };
+
+  if(p.actEnabled){
+    const res = solveThetaFromActuatorLength(p, baseKey, moveKey, p.actLenM);
+    thetaDeg = clamp(res.thetaDeg, p.thetaMin, p.thetaMax);
+    actSolve = res;
+
+    // Update θ slider/readout to reflect solved θ (even though slider is disabled)
+    ui.theta.value = String(thetaDeg);
+    ui.thetaReadout.textContent = thetaDeg.toFixed(1);
+  }
+
+  const sol = solveScissor({ L:p.L, N:p.N, thetaDeg });
+
+  // Stroke computations (still computed from θmin/θmax)
+  const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin });
+  const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax });
 
   const actLen = actuatorLength(sol, baseKey, moveKey);
   const actMin = actuatorLength(solMin, baseKey, moveKey);
   const actMax = actuatorLength(solMax, baseKey, moveKey);
 
-  const strokeTotal = actMax - actMin;
-  const strokeUsed = actLen - actMin;
+  const strokeTotal = (Number.isFinite(actMin) && Number.isFinite(actMax)) ? (actMax - actMin) : NaN;
+  const strokeUsed = (Number.isFinite(actLen) && Number.isFinite(actMin)) ? (actLen - actMin) : NaN;
+
+  // If actuator enabled, keep the actuator length slider synchronized to actual derived length
+  // (this prevents drift if clamping occurred)
+  if(p.actEnabled && Number.isFinite(actLen)){
+    const actDisp = fromMeters_toGeomUnits(actLen, p.geomUnits);
+    ui.actLen.value = String(actDisp);
+    ui.actLenReadout.textContent = `${actDisp.toFixed(3)} ${unitLabel(p.geomUnits)}`;
+  }
 
   // Total weight and force trend
   const Wtotal = p.Wpayload + p.Wplatform + p.N * p.WarmsStage;
@@ -431,24 +605,33 @@ function update(){
   const Frated = Fact * fricMult * p.SF;
   const FperAct = Frated / p.nAct;
 
-  // Outputs (geometry in chosen units)
+  // Outputs
   ui.out_h.textContent = fmtLenFromMeters(sol.h, p.geomUnits, 3);
   ui.out_H.textContent = fmtLenFromMeters(sol.H, p.geomUnits, 3);
   ui.out_w.textContent = fmtLenFromMeters(sol.w, p.geomUnits, 3);
 
-  ui.out_actLen.textContent = fmtLenFromMeters(actLen, p.geomUnits, 3);
-  ui.out_strokeUsed.textContent = fmtLenFromMeters(strokeUsed, p.geomUnits, 3);
-  ui.out_strokeTotal.textContent = fmtLenFromMeters(strokeTotal, p.geomUnits, 3);
+  ui.out_actEnabled.textContent = p.actEnabled ? "Yes (actuator-driven)" : "No (θ-driven)";
+  ui.out_actLen.textContent = p.actEnabled ? fmtLenFromMeters(actLen, p.geomUnits, 3) : "—";
+  ui.out_strokeUsed.textContent = p.actEnabled ? fmtLenFromMeters(strokeUsed, p.geomUnits, 3) : "—";
+  ui.out_strokeTotal.textContent = p.actEnabled ? fmtLenFromMeters(strokeTotal, p.geomUnits, 3) : "—";
 
   ui.out_Wtotal.textContent = `${fmt(Wtotal,1)} N`;
   ui.out_Fact.textContent = `${fmt(Fact,1)} N`;
   ui.out_Fper.textContent = `${fmt(FperAct,1)} N`;
 
-  const warnings = computeWarnings(p, sol, { FperAct, actNaN: !Number.isFinite(actLen) });
+  const warnings = computeWarnings(
+    { ...p, thetaDeg, platformWidth:p.platformWidth, baseWidth:p.baseWidth },
+    sol,
+    {
+      FperAct,
+      actEnabled: p.actEnabled,
+      actClamped: !!actSolve.clamped,
+      actInvalid: !Number.isFinite(actLen)
+    }
+  );
   renderWarnings(warnings);
 
-  // Draw
-  draw(sol, p.geomUnits);
+  draw(sol, p.geomUnits, p.showLabels);
 }
 
 // Animation
@@ -457,23 +640,44 @@ let anim = { running:false, dir: +1, raf:0 };
 function startAnim(dir){
   anim.running = true;
   anim.dir = dir;
+
   const step = () => {
     if(!anim.running) return;
 
     const p = readParams();
-    const speedDegPerSec = 18; // adjust freely
     const dt = 1/60;
-    let t = Number(ui.theta.value);
-    t += anim.dir * speedDegPerSec * dt;
 
-    // Clamp and stop at limits
-    if(t >= p.thetaMax){ t = p.thetaMax; anim.running = false; }
-    if(t <= p.thetaMin){ t = p.thetaMin; anim.running = false; }
+    if(p.actEnabled){
+      // Actuator-driven animation: move actuator length
+      const speedUnitsPerSec = 0.25; // fraction of range per second-ish (tune)
+      const min = Number(ui.actLen.min);
+      const max = Number(ui.actLen.max);
+      const span = Math.max(1e-9, max - min);
 
-    ui.theta.value = String(t);
+      let v = Number(ui.actLen.value);
+      v += anim.dir * speedUnitsPerSec * span * dt;
+
+      if(v >= max){ v = max; anim.running = false; }
+      if(v <= min){ v = min; anim.running = false; }
+
+      ui.actLen.value = String(v);
+      ui.actLenReadout.textContent = `${v.toFixed(3)} ${unitLabel(p.geomUnits)}`;
+    } else {
+      // θ-driven animation (original)
+      const speedDegPerSec = 18;
+      let t = Number(ui.theta.value);
+      t += anim.dir * speedDegPerSec * dt;
+
+      if(t >= p.thetaMax){ t = p.thetaMax; anim.running = false; }
+      if(t <= p.thetaMin){ t = p.thetaMin; anim.running = false; }
+
+      ui.theta.value = String(t);
+    }
+
     update();
     anim.raf = requestAnimationFrame(step);
   };
+
   anim.raf = requestAnimationFrame(step);
 }
 
@@ -492,11 +696,15 @@ function stopAnim(){
   ui.frictionPct, ui.SF, ui.nAct
 ].forEach(inp => inp.addEventListener("input", () => update()));
 
-ui.actBase?.addEventListener("change", update);
-ui.actMove?.addEventListener("change", update);
+ui.actEnable?.addEventListener("change", () => { stopAnim(); update(); });
+ui.actBase?.addEventListener("change", () => { stopAnim(); update(); });
+ui.actMove?.addEventListener("change", () => { stopAnim(); update(); });
+ui.actLen?.addEventListener("input", () => { if(ui.actEnable.checked) update(); });
+ui.showPointLabels?.addEventListener("change", update);
 
-// Convert displayed geometry values when units toggle changes (so design stays same physically)
+// Geometry unit toggle converts displayed geometry values so the physical design stays same
 ui.geomUnits?.addEventListener("change", () => {
+  stopAnim();
   const newUnits = ui.geomUnits.value;
   const oldUnits = lastGeomUnits;
 

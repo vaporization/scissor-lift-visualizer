@@ -8,6 +8,7 @@
   --warn:#f5c542;
   --bad:#f7768e;
   --ok:#9ece6a;
+  --point:#89ddff;
 }
 
 *{ box-sizing:border-box; }
@@ -87,6 +88,18 @@ select{
   color:var(--text);
 }
 
+.checkrow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:10px;
+}
+.checkrow input{
+  width:auto;
+  margin:0;
+  transform: translateY(1px);
+}
+
 .small{
   color:var(--muted);
   font-size:12px;
@@ -132,6 +145,7 @@ button:hover{ filter:brightness(1.06); }
 }
 .dot.fixed{ background:var(--accent); }
 .dot.joint{ background:#c3e88d; }
+.dot.point{ background:var(--point); }
 .line{
   width:18px; height:3px; border-radius:2px; display:inline-block;
 }
