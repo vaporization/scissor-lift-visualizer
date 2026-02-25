@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Scissor Lift Visualizer (2D)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">Scissor Lift Visualizer (2D)</div>
+    <div class="subtitle">θ-driven geometry • actuator derived • force trends + warnings</div>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT: Inputs -->
+    <section class="panel">
+      <h2>Inputs</h2>
+
+      <div class="group">
+        <h3>A) Geometry</h3>
+
+        <label>
+          Arm length L (m)
+          <input id="L" type="number" step="0.01" min="0.01" value="0.60">
+        </label>
+
+        <label>
+          Stages N
+          <input id="N" type="number" step="1" min="1" max="10" value="2">
+        </label>
+
+        <label>
+          θ min (deg)
+          <input id="thetaMin" type="number" step="0.1" min="1" max="89" value="10">
+        </label>
+
+        <label>
+          θ max (deg)
+          <input id="thetaMax" type="number" step="0.1" min="1" max="89" value="70">
+        </label>
+
+        <label>
+          Platform width (m)
+          <input id="platformWidth" type="number" step="0.01" min="0.01" value="1.20">
+        </label>
+
+        <label>
+          Base width (m)
+          <input id="baseWidth" type="number" step="0.01" min="0.01" value="1.20">
+        </label>
+
+        <label>
+          θ (deg) — state variable
+          <input id="theta" type="range" min="10" max="70" step="0.1" value="25">
+          <div class="small"><span id="thetaReadout">25.0</span>°</div>
+        </label>
+      </div>
+
+      <div class="group">
+        <h3>B) Loads / Factors</h3>
+
+        <label>
+          Payload weight (N)
+          <input id="Wpayload" type="number" step="10" min="0" value="1000">
+        </label>
+
+        <label>
+          Platform weight (N)
+          <input id="Wplatform" type="number" step="10" min="0" value="200">
+        </label>
+
+        <label>
+          Arm weight per stage (N)
+          <input id="WarmsStage" type="number" step="10" min="0" value="150">
+        </label>
+
+        <label>
+          Friction / resistance (%)
+          <input id="frictionPct" type="number" step="0.5" min="0" value="10">
+        </label>
+
+        <label>
+          Safety factor (SF)
+          <input id="SF" type="number" step="0.05" min="1" value="1.50">
+        </label>
+
+        <label>
+          Number of actuators
+          <input id="nAct" type="number" step="1" min="1" max="4" value="1">
+        </label>
+      </div>
+
+      <div class="group">
+        <h3>Controls</h3>
+        <div class="row">
+          <button id="btnLower">Lower</button>
+          <button id="btnLift" class="primary">Lift</button>
+          <button id="btnStop">Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER: Visualizer -->
+    <section class="panel viz">
+      <h2>Visualizer</h2>
+      <div class="canvasWrap">
+        <svg id="svg" viewBox="0 0 1000 700" role="img" aria-label="Scissor lift visualizer">
+          <rect x="0" y="0" width="1000" height="700" class="bg" />
+          <g id="scene"></g>
+        </svg>
+      </div>
+      <div class="legend">
+        <span class="dot fixed"></span> fixed pivot
+        <span class="dot joint"></span> joint
+        <span class="line arms"></span> arms
+        <span class="line actuator"></span> actuator
+        <span class="line platform"></span> platforms
+      </div>
+    </section>
+
+    <!-- RIGHT: Outputs -->
+    <section class="panel">
+      <h2>Outputs</h2>
+
+      <div class="group">
+        <h3>Kinematics</h3>
+        <div class="kv"><span>Stage height h</span><span id="out_h">—</span></div>
+        <div class="kv"><span>Total lift H</span><span id="out_H">—</span></div>
+        <div class="kv"><span>Span w</span><span id="out_w">—</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Actuator (derived)</h3>
+        <div class="kv"><span>Length</span><span id="out_actLen">—</span></div>
+        <div class="kv"><span>Stroke used</span><span id="out_strokeUsed">—</span></div>
+        <div class="kv"><span>Stroke total</span><span id="out_strokeTotal">—</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Force trend</h3>
+        <div class="kv"><span>Total weight W</span><span id="out_Wtotal">—</span></div>
+        <div class="kv"><span>F_act (ideal trend)</span><span id="out_Fact">—</span></div>
+        <div class="kv"><span>Per actuator (w/ fric + SF)</span><span id="out_Fper">—</span></div>
+      </div>
+
+      <div class="group">
+        <h3>Warnings</h3>
+        <ul id="warnings" class="warnings"></ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    Geometry-first: solve θ → everything else follows.
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
