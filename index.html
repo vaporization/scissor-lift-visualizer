@@ -241,33 +241,23 @@
     </section>
 
     <!-- CENTER: Visualizer -->
-    <section class="panel viz">
-      <h2>Visualizer</h2>
+<section class="panel viz">
+  <h2>Visualizer</h2>
+  <div class="canvasWrap">
+    <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
+  </div>
 
-      <div class="canvasWrap">
-        <!-- 3D -->
-        <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
+  <div id="vizStatus" class="vizStatus">Initializing…</div>
 
-        <!-- 2D fallback -->
-        <svg id="svg" viewBox="0 0 1000 700" role="img" aria-label="Scissor lift 2D visualizer (fallback)">
-          <rect x="0" y="0" width="1000" height="700" class="bg" />
-          <g id="scene"></g>
-        </svg>
-      </div>
-
-      <div id="vizStatus" class="vizStatus">
-        <strong>Status:</strong> Initializing…
-      </div>
-
-      <div class="legend">
-        <span class="dot fixed"></span> fixed pivot
-        <span class="dot joint"></span> joint
-        <span class="dot point"></span> selectable point
-        <span class="line arms"></span> arms
-        <span class="line actuator"></span> actuator
-        <span class="line platform"></span> platforms
-      </div>
-    </section>
+  <div class="legend">
+    <span class="dot fixed"></span> fixed pivot
+    <span class="dot joint"></span> joint
+    <span class="dot point"></span> selectable point
+    <span class="line arms"></span> arms
+    <span class="line actuator"></span> actuator
+    <span class="line platform"></span> platforms
+  </div>
+</section>
 
     <!-- RIGHT: Outputs -->
     <section class="panel">
