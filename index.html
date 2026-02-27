@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Scissor Lift Visualizer (2D)</title>
+  <title>Scissor Lift Visualizer (3D)</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="title">Scissor Lift Visualizer (2D)</div>
-    <div class="subtitle">θ-driven geometry • actuator optional • actuator can drive motion</div>
+    <div class="title">Scissor Lift Visualizer (3D)</div>
+    <div class="subtitle">θ-driven geometry • actuator optional • 3D rendering (orbit + zoom + pan)</div>
   </header>
 
   <main class="layout">
@@ -17,7 +17,7 @@
     <section class="panel">
       <h2>Inputs</h2>
 
-      <!-- MOVED UP: Controls -->
+      <!-- Controls -->
       <div class="group">
         <h3>Controls</h3>
         <div class="row">
@@ -68,7 +68,6 @@
           <input id="baseWidth" type="number" step="0.01" min="0.01" value="1.20">
         </label>
 
-        <!-- ✅ OFFSETS ARE BACK -->
         <label id="label_baseXOffset">
           Base X offset (m) — slide base platform left/right
           <input id="baseXOffset" type="number" step="0.001" value="0">
@@ -84,6 +83,39 @@
           <input id="theta" type="range" min="10" max="70" step="0.1" value="25">
           <div class="small"><span id="thetaReadout">25.0</span>°</div>
         </label>
+      </div>
+
+      <!-- NEW: 3D view controls -->
+      <div class="group">
+        <h3>3D View</h3>
+
+        <label>
+          Lift depth (Z) (m)
+          <input id="liftDepth" type="number" step="0.01" min="0.01" value="0.50">
+        </label>
+
+        <label>
+          Arm thickness (m)
+          <input id="armThk" type="number" step="0.001" min="0.001" value="0.04">
+        </label>
+
+        <label>
+          Platform thickness (m)
+          <input id="platThk" type="number" step="0.001" min="0.001" value="0.06">
+        </label>
+
+        <label>
+          Joint radius (m)
+          <input id="jointR" type="number" step="0.001" min="0.001" value="0.03">
+        </label>
+
+        <div class="row">
+          <button id="btnFit">Auto-fit camera</button>
+        </div>
+
+        <div class="small">
+          Mouse: Left drag = orbit • Wheel = zoom • Right drag = pan
+        </div>
       </div>
 
       <div class="group">
@@ -146,7 +178,6 @@
           <select id="actMove"></select>
         </label>
 
-        <!-- ✅ ACTUATOR OFFSETS (WORLD X/Y) -->
         <label id="label_actBaseOffX">
           Base endpoint X offset (m)
           <input id="actBaseOffX" type="number" step="0.001" value="0">
@@ -189,10 +220,7 @@
     <section class="panel viz">
       <h2>Visualizer</h2>
       <div class="canvasWrap">
-        <svg id="svg" viewBox="0 0 1000 700" role="img" aria-label="Scissor lift visualizer">
-          <rect x="0" y="0" width="1000" height="700" class="bg" />
-          <g id="scene"></g>
-        </svg>
+        <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
       </div>
       <div class="legend">
         <span class="dot fixed"></span> fixed pivot
@@ -241,6 +269,7 @@
     Geometry-first: solve θ → everything else follows. If actuator enabled: solve θ from actuator length.
   </footer>
 
-  <script src="app.js"></script>
+  <!-- IMPORTANT: app.js is now a module -->
+  <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -1,6 +1,8 @@
-// Scissor Lift Visualizer (2D)
-// L is FULL ARM LENGTH (end pivot → end pivot), not half-link.
-// Therefore: per stage h = L*sinθ, w = L*cosθ. Bars drawn A→C and B→D have length exactly L.
+// Scissor Lift Visualizer (3D render)
+// Solver is still 2D (X/Y). We render solids in 3D by giving the mechanism a Z depth.
+
+import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
+import { OrbitControls } from "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,6 +17,13 @@ const ui = {
   topXOffset: $("topXOffset"),
   theta: $("theta"),
   thetaReadout: $("thetaReadout"),
+
+  // 3D controls
+  liftDepth: $("liftDepth"),
+  armThk: $("armThk"),
+  platThk: $("platThk"),
+  jointR: $("jointR"),
+  btnFit: $("btnFit"),
 
   geomUnits: $("geomUnits"),
   label_L: $("label_L"),
@@ -36,7 +45,7 @@ const ui = {
   label_actLen: $("label_actLen"),
   showPointLabels: $("showPointLabels"),
 
-  // ✅ actuator endpoint offsets (WORLD X/Y, in geom units)
+  // actuator endpoint offsets (WORLD X/Y, in geom units)
   actBaseOffX: $("actBaseOffX"),
   actBaseOffY: $("actBaseOffY"),
   actMoveOffX: $("actMoveOffX"),
@@ -68,8 +77,8 @@ const ui = {
 
   warnings: $("warnings"),
 
-  svg: $("svg"),
-  scene: $("scene"),
+  // 3D canvas
+  glcanvas: $("glcanvas"),
 
   btnLift: $("btnLift"),
   btnLower: $("btnLower"),
@@ -77,7 +86,6 @@ const ui = {
 };
 
 const DEG2RAD = Math.PI / 180;
-
 function clamp(x, a, b){ return Math.max(a, Math.min(b, x)); }
 
 // -------------------- Units (Geometry-only) --------------------
@@ -131,7 +139,7 @@ function updateLoadLabels(units){
   setLabelText(ui.label_WarmsStage, `Arm weight per stage (${u})`);
 }
 
-// -------------------- Geometry Solver --------------------
+// -------------------- Geometry Solver (unchanged) --------------------
 function solveScissor({ L, N, thetaDeg, baseWidth, platformWidth, baseXOffset, topXOffset }){
   const theta = thetaDeg * DEG2RAD;
   const h = L * Math.sin(theta);
@@ -189,7 +197,7 @@ function solveScissor({ L, N, thetaDeg, baseWidth, platformWidth, baseXOffset, t
   return { theta, h, w, H, stages, bottomPlatform, topPlatform, minX, maxX, minY, maxY };
 }
 
-// -------------------- Selectable points --------------------
+// -------------------- Selectable points (unchanged) --------------------
 function lerpPoint(p1, p2, t){ return { x: p1.x + (p2.x-p1.x)*t, y: p1.y + (p2.y-p1.y)*t }; }
 
 function getSelectablePointsForStage(sol, i){
@@ -271,7 +279,7 @@ function refreshActuatorSelects(N){
   ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
 }
 
-// -------------------- ✅ Actuator endpoint offsets (WORLD X/Y) --------------------
+// -------------------- Actuator offsets + length (unchanged) --------------------
 function pointWithXYOffset(sol, key, offX, offY){
   const p = getPointByKey(sol, key);
   if(!p) return null;
@@ -285,7 +293,7 @@ function actuatorLength(sol, baseKey, moveKey, baseOffX, baseOffY, moveOffX, mov
   return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
 
-// -------------------- Placement-aware force model (virtual work) --------------------
+// -------------------- Placement-aware force model (unchanged) --------------------
 function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
   const dThetaDeg = 0.05;
   const t1 = clamp(thetaDeg - dThetaDeg, p.thetaMin, p.thetaMax);
@@ -315,7 +323,7 @@ function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
   return { F: Math.abs(F) };
 }
 
-// -------------------- Inverse solve: θ from actuator length --------------------
+// -------------------- Inverse solve: θ from actuator length (unchanged) --------------------
 function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
   const thetaMin = p.thetaMin;
   const thetaMax = p.thetaMax;
@@ -360,102 +368,7 @@ function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
   return { thetaDeg: 0.5*(a+b), ok:true, clamped };
 }
 
-// -------------------- Rendering transform --------------------
-function makeViewportTransform(sol){
-  const margin = 0.18;
-
-  const spanX = Math.max(1e-6, sol.maxX - sol.minX);
-  const spanY = Math.max(1e-6, sol.maxY - sol.minY);
-
-  const minX = sol.minX - margin * spanX;
-  const maxX = sol.maxX + margin * spanX;
-  const minY = sol.minY - margin * spanY;
-  const maxY = sol.maxY + margin * spanY + (sol.h || 0);
-
-  const viewW = 1000, viewH = 700;
-  const worldW = Math.max(1e-6, maxX - minX);
-  const worldH = Math.max(1e-6, maxY - minY);
-
-  const s = Math.min(viewW/worldW, viewH/worldH);
-  const tx = (viewW - worldW*s)/2 - minX*s;
-  const ty = (viewH - worldH*s)/2 + maxY*s;
-
-  return { toScreen: (p) => ({ x: p.x*s + tx, y: -p.y*s + ty }) };
-}
-
-function clearScene(){ while(ui.scene.firstChild) ui.scene.removeChild(ui.scene.firstChild); }
-function el(name, attrs={}){
-  const n = document.createElementNS("http://www.w3.org/2000/svg", name);
-  for(const [k,v] of Object.entries(attrs)) n.setAttribute(k, String(v));
-  return n;
-}
-
-function draw(sol, geomUnits, showLabels, p){
-  clearScene();
-  const { toScreen } = makeViewportTransform(sol);
-
-  const bpL = toScreen(sol.bottomPlatform.left);
-  const bpR = toScreen(sol.bottomPlatform.right);
-  const tpL = toScreen(sol.topPlatform.left);
-  const tpR = toScreen(sol.topPlatform.right);
-
-  ui.scene.appendChild(el("line", { x1:bpL.x, y1:bpL.y, x2:bpR.x, y2:bpR.y, stroke:"#a9b1c3", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
-  ui.scene.appendChild(el("line", { x1:tpL.x, y1:tpL.y, x2:tpR.x, y2:tpR.y, stroke:"#a9b1c3", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
-
-  for(const st of sol.stages){
-    const A = toScreen(st.A), B = toScreen(st.B), C = toScreen(st.C), D = toScreen(st.D);
-    ui.scene.appendChild(el("line", { x1:A.x, y1:A.y, x2:C.x, y2:C.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
-    ui.scene.appendChild(el("line", { x1:B.x, y1:B.y, x2:D.x, y2:D.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
-  }
-
-  if(ui.actEnable?.checked){
-    const baseKey = ui.actBase?.value || "A0";
-    const moveKey = ui.actMove?.value || "P0";
-
-    const p1w = pointWithXYOffset(sol, baseKey, p.actBaseOffX, p.actBaseOffY);
-    const p2w = pointWithXYOffset(sol, moveKey, p.actMoveOffX, p.actMoveOffY);
-
-    if(p1w && p2w){
-      const p1 = toScreen(p1w);
-      const p2 = toScreen(p2w);
-      ui.scene.appendChild(el("line", { x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y, stroke:"#ff9e64", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
-      ui.scene.appendChild(el("circle", { cx:p1.x, cy:p1.y, r:7, fill:"#ff9e64" }));
-      ui.scene.appendChild(el("circle", { cx:p2.x, cy:p2.y, r:7, fill:"#ff9e64" }));
-    }
-  }
-
-  for(const pt of [sol.bottomPlatform.pivL, sol.bottomPlatform.pivR]){
-    const s = toScreen(pt);
-    ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:7, fill:"#7aa2f7" }));
-  }
-
-  for(const st of sol.stages){
-    for(const pt of [st.A, st.B, st.C, st.D, st.P]){
-      const s = toScreen(pt);
-      ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:5, fill:"#c3e88d" }));
-    }
-  }
-
-  for(let i=0; i<sol.stages.length; i++){
-    const pts = getSelectablePointsForStage(sol, i);
-    const keys = [`AP_${i}`, `PC_${i}`, `BP_${i}`, `PD_${i}`];
-    for(const k of keys){
-      const pt = pts[k];
-      const s = toScreen(pt);
-      ui.scene.appendChild(el("circle", { cx:s.x, cy:s.y, r:4.5, fill:"#89ddff", opacity:0.95 }));
-      if(showLabels){
-        ui.scene.appendChild(el("text", { x:s.x+6, y:s.y-6, fill:"#89ddff", "font-size":"12" })).textContent = k;
-      }
-    }
-  }
-
-  ui.scene.appendChild(el("text", { x:tpL.x, y:tpL.y - 12, fill:"#a9b1c3", "font-size":"14" }))
-    .textContent = `Top platform y = ${fromMeters_toGeomUnits(sol.H, geomUnits).toFixed(3)} ${unitLabelGeom(geomUnits)}`;
-
-  ui.scene.appendChild(el("text", { x:bpL.x, y:bpL.y + 18, fill:"#a9b1c3", "font-size":"14" }))
-    .textContent = `Base`;
-}
-
+// -------------------- Warnings / outputs (unchanged) --------------------
 function renderWarnings(items){
   ui.warnings.innerHTML = "";
   for(const w of items){
@@ -509,6 +422,7 @@ function computeWarnings(p, sol, out){
   return warnings;
 }
 
+// -------------------- Read params (adds 3D fields) --------------------
 function readParams(){
   const geomUnits = ui.geomUnits?.value || "metric";
   updateGeomLabels(geomUnits);
@@ -535,11 +449,17 @@ function readParams(){
   const baseXOffset = toMeters_fromGeomUnits(Number(ui.baseXOffset?.value || 0), geomUnits);
   const topXOffset  = toMeters_fromGeomUnits(Number(ui.topXOffset?.value || 0), geomUnits);
 
-  // ✅ actuator endpoint offsets (geom units -> meters)
+  // actuator endpoint offsets (geom units -> meters)
   const actBaseOffX = toMeters_fromGeomUnits(Number(ui.actBaseOffX?.value || 0), geomUnits);
   const actBaseOffY = toMeters_fromGeomUnits(Number(ui.actBaseOffY?.value || 0), geomUnits);
   const actMoveOffX = toMeters_fromGeomUnits(Number(ui.actMoveOffX?.value || 0), geomUnits);
   const actMoveOffY = toMeters_fromGeomUnits(Number(ui.actMoveOffY?.value || 0), geomUnits);
+
+  // 3D params (also in geom units)
+  const liftDepth = toMeters_fromGeomUnits(Number(ui.liftDepth?.value || 0.5), geomUnits);
+  const armThk = toMeters_fromGeomUnits(Number(ui.armThk?.value || 0.04), geomUnits);
+  const platThk = toMeters_fromGeomUnits(Number(ui.platThk?.value || 0.06), geomUnits);
+  const jointR = toMeters_fromGeomUnits(Number(ui.jointR?.value || 0.03), geomUnits);
 
   const Wpayload = toNewtons_fromLoadUnits(Number(ui.Wpayload.value), loadUnits);
   const Wplatform = toNewtons_fromLoadUnits(Number(ui.Wplatform.value), loadUnits);
@@ -560,11 +480,13 @@ function readParams(){
     L, N, thetaMin, thetaMax, thetaDeg,
     platformWidth, baseWidth, baseXOffset, topXOffset,
     actBaseOffX, actBaseOffY, actMoveOffX, actMoveOffY,
+    liftDepth, armThk, platThk, jointR,
     Wpayload, Wplatform, WarmsStage, frictionPct, SF, nAct,
     actEnabled, actLenM, showLabels
   };
 }
 
+// -------------------- Actuator slider range UI (unchanged) --------------------
 function setActuatorLenSliderRangeFromThetaLimits(p){
   const baseKey = ui.actBase?.value || "A0";
   const moveKey = ui.actMove?.value || "P0";
@@ -603,6 +525,226 @@ function updateDriveUI(p){
   ui.actLenReadout.textContent = `${disp.toFixed(3)} ${unitLabelGeom(p.geomUnits)}`;
 }
 
+// ==================== 3D Renderer ====================
+let renderer, scene, camera, controls;
+let world;
+
+let mats;
+let platformBase, platformTop;
+let arms = [];   // [ [armAC, armBD], ... ]
+let joints = []; // per stage: {A,B,C,D,P}
+let actuator = { rod:null, a:null, b:null };
+
+let lastN = -1;
+let lastVisualKey = "";
+
+function init3D(){
+  renderer = new THREE.WebGLRenderer({ canvas: ui.glcanvas, antialias:true, alpha:false });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.setClearColor(0x0a0d13, 1);
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(45, 1, 0.01, 2000);
+  camera.position.set(1.6, 1.2, 2.2);
+
+  controls = new OrbitControls(camera, ui.glcanvas);
+  controls.enableDamping = true;
+  controls.target.set(0.6, 0.5, 0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.60));
+  const key = new THREE.DirectionalLight(0xffffff, 0.90);
+  key.position.set(2.5, 3.5, 2.0);
+  scene.add(key);
+
+  world = new THREE.Group();
+  scene.add(world);
+
+  // simple grid on ground plane
+  const grid = new THREE.GridHelper(6, 24);
+  grid.position.y = 0;
+  world.add(grid);
+
+  mats = {
+    arms: new THREE.MeshStandardMaterial({ color: 0xc3e88d, roughness:0.6, metalness:0.05 }),
+    joints: new THREE.MeshStandardMaterial({ color: 0x7aa2f7, roughness:0.5, metalness:0.05 }),
+    platforms: new THREE.MeshStandardMaterial({ color: 0xa9b1c3, roughness:0.75, metalness:0.02 }),
+    actuator: new THREE.MeshStandardMaterial({ color: 0xff9e64, roughness:0.55, metalness:0.05 })
+  };
+
+  window.addEventListener("resize", resize3D);
+  resize3D();
+
+  requestAnimationFrame(render3DLoop);
+}
+
+function resize3D(){
+  const w = ui.glcanvas.clientWidth;
+  const h = ui.glcanvas.clientHeight;
+  if(w <= 0 || h <= 0) return;
+
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+function render3DLoop(){
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(render3DLoop);
+}
+
+function clearGroupKeepGrid(){
+  // keep first child if it's the grid helper
+  const keep = world.children[0];
+  for(let i=world.children.length-1; i>=0; i--){
+    const c = world.children[i];
+    if(c === keep) continue;
+    world.remove(c);
+    c.traverse?.(obj => {
+      if(obj.geometry) obj.geometry.dispose();
+      if(obj.material){
+        if(Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        else obj.material.dispose();
+      }
+    });
+  }
+}
+
+function ensureStageMeshes(N, visual){
+  // visual key includes thickness/radius that require rebuild of geometry
+  const vKey = `${N}|${visual.armThk}|${visual.jointR}|${visual.platThk}`;
+
+  if(N === lastN && vKey === lastVisualKey) return;
+  lastN = N;
+  lastVisualKey = vKey;
+
+  arms = [];
+  joints = [];
+  platformBase = null;
+  platformTop = null;
+
+  clearGroupKeepGrid();
+
+  // base platforms: box geometry of unit size, scaled each frame
+  const platGeo = new THREE.BoxGeometry(1, 1, 1);
+  platformBase = new THREE.Mesh(platGeo, mats.platforms);
+  platformTop  = new THREE.Mesh(platGeo, mats.platforms);
+  world.add(platformBase, platformTop);
+
+  // arm geometry: unit length along X, scale X to actual length
+  const armGeo = new THREE.BoxGeometry(1, 1, 1);
+
+  // joint geometry
+  const jointGeo = new THREE.SphereGeometry(Math.max(visual.jointR, 1e-6), 18, 18);
+
+  for(let i=0; i<N; i++){
+    const armAC = new THREE.Mesh(armGeo, mats.arms);
+    const armBD = new THREE.Mesh(armGeo, mats.arms);
+    world.add(armAC, armBD);
+    arms.push([armAC, armBD]);
+
+    const j = {
+      A: new THREE.Mesh(jointGeo, mats.joints),
+      B: new THREE.Mesh(jointGeo, mats.joints),
+      C: new THREE.Mesh(jointGeo, mats.joints),
+      D: new THREE.Mesh(jointGeo, mats.joints),
+      P: new THREE.Mesh(jointGeo, mats.joints)
+    };
+    Object.values(j).forEach(m => world.add(m));
+    joints.push(j);
+  }
+
+  // actuator meshes (rod + end spheres)
+  actuator.rod = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mats.actuator);
+  actuator.a   = new THREE.Mesh(new THREE.SphereGeometry(Math.max(visual.jointR*1.15, 1e-6), 18, 18), mats.actuator);
+  actuator.b   = new THREE.Mesh(new THREE.SphereGeometry(Math.max(visual.jointR*1.15, 1e-6), 18, 18), mats.actuator);
+  world.add(actuator.rod, actuator.a, actuator.b);
+}
+
+function placeRodBox(mesh, p1, p2, thk, z){
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const len = Math.hypot(dx, dy);
+
+  const mx = (p1.x + p2.x) / 2;
+  const my = (p1.y + p2.y) / 2;
+
+  mesh.position.set(mx, my, z);
+  mesh.rotation.set(0, 0, Math.atan2(dy, dx));
+
+  // geometry is 1x1x1; scale X to length, Y to thickness, Z to thickness
+  mesh.scale.set(Math.max(len, 1e-6), Math.max(thk, 1e-6), Math.max(thk, 1e-6));
+}
+
+function render3D(sol, p){
+  const zDepth = Math.max(p.liftDepth, 1e-6);
+  const zPlane = 0; // single-plane scissor at z=0 for now
+
+  ensureStageMeshes(sol.stages.length, { armThk:p.armThk, jointR:p.jointR, platThk:p.platThk });
+
+  // platforms: thickness in Y, width in X, depth in Z
+  const baseCenterX = (sol.bottomPlatform.left.x + sol.bottomPlatform.right.x) / 2;
+  const baseY = sol.bottomPlatform.left.y;
+
+  const topCenterX = (sol.topPlatform.left.x + sol.topPlatform.right.x) / 2;
+  const topY = sol.topPlatform.left.y;
+
+  platformBase.position.set(baseCenterX, baseY - p.platThk/2, zPlane);
+  platformBase.scale.set(Math.max(p.baseWidth, 1e-6), Math.max(p.platThk, 1e-6), zDepth);
+
+  platformTop.position.set(topCenterX, topY + p.platThk/2, zPlane);
+  platformTop.scale.set(Math.max(p.platformWidth, 1e-6), Math.max(p.platThk, 1e-6), zDepth);
+
+  // arms + joints
+  for(let i=0; i<sol.stages.length; i++){
+    const st = sol.stages[i];
+
+    placeRodBox(arms[i][0], st.A, st.C, p.armThk, zPlane);
+    placeRodBox(arms[i][1], st.B, st.D, p.armThk, zPlane);
+
+    joints[i].A.position.set(st.A.x, st.A.y, zPlane);
+    joints[i].B.position.set(st.B.x, st.B.y, zPlane);
+    joints[i].C.position.set(st.C.x, st.C.y, zPlane);
+    joints[i].D.position.set(st.D.x, st.D.y, zPlane);
+    joints[i].P.position.set(st.P.x, st.P.y, zPlane);
+  }
+
+  // actuator
+  const showAct = !!p.actEnabled;
+  actuator.rod.visible = showAct;
+  actuator.a.visible = showAct;
+  actuator.b.visible = showAct;
+
+  if(showAct && p.actP1w && p.actP2w){
+    placeRodBox(actuator.rod, p.actP1w, p.actP2w, Math.max(p.armThk*0.85, 1e-6), zPlane);
+    actuator.a.position.set(p.actP1w.x, p.actP1w.y, zPlane);
+    actuator.b.position.set(p.actP2w.x, p.actP2w.y, zPlane);
+  }
+}
+
+function fitCameraToSolution(sol, p){
+  // Fit camera to the 2D bounds, with a bit of padding, ignoring Z for now.
+  const pad = 0.20;
+  const spanX = Math.max(1e-6, sol.maxX - sol.minX);
+  const spanY = Math.max(1e-6, sol.maxY - sol.minY);
+
+  const cx = (sol.minX + sol.maxX) / 2;
+  const cy = (sol.minY + sol.maxY) / 2;
+
+  controls.target.set(cx, cy, 0);
+
+  // approximate required distance based on FOV and largest span
+  const fov = camera.fov * DEG2RAD;
+  const maxSpan = Math.max(spanX, spanY) * (1 + pad);
+  const dist = (maxSpan / 2) / Math.tan(fov / 2);
+
+  camera.position.set(cx + dist*0.9, cy + dist*0.6, dist*1.1);
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+// -------------------- Update loop (mostly unchanged) --------------------
 function update(){
   const p0 = readParams();
 
@@ -687,10 +829,17 @@ function update(){
     { actEnabled:p.actEnabled, actClamped:!!actSolve.clamped, actLen, FactVW, FperAct }
   ));
 
-  draw(sol, p.geomUnits, p.showLabels, p);
+  // actuator world points for 3D render
+  let actP1w = null, actP2w = null;
+  if(p.actEnabled){
+    actP1w = pointWithXYOffset(sol, baseKey, p.actBaseOffX, p.actBaseOffY);
+    actP2w = pointWithXYOffset(sol, moveKey, p.actMoveOffX, p.actMoveOffY);
+  }
+
+  render3D(sol, { ...p, thetaDeg, actP1w, actP2w });
 }
 
-// Animation
+// -------------------- Animation (unchanged) --------------------
 let anim = { running:false, dir:+1, raf:0 };
 
 function startAnim(dir){
@@ -740,11 +889,13 @@ function stopAnim(){
   anim.raf = 0;
 }
 
-// Events
+// -------------------- Events --------------------
 [
   ui.L, ui.N, ui.thetaMin, ui.thetaMax,
   ui.platformWidth, ui.baseWidth,
   ui.baseXOffset, ui.topXOffset,
+
+  ui.liftDepth, ui.armThk, ui.platThk, ui.jointR,
 
   ui.actBaseOffX, ui.actBaseOffY, ui.actMoveOffX, ui.actMoveOffY,
 
@@ -759,6 +910,16 @@ ui.actMove?.addEventListener("change", () => { stopAnim(); update(); });
 ui.actLen?.addEventListener("input", () => { if(ui.actEnable.checked) update(); });
 ui.showPointLabels?.addEventListener("change", update);
 
+ui.btnFit?.addEventListener("click", () => {
+  const p = readParams();
+  const sol = solveScissor({
+    L:p.L, N:p.N, thetaDeg:p.thetaDeg,
+    baseWidth:p.baseWidth, platformWidth:p.platformWidth,
+    baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
+  });
+  fitCameraToSolution(sol, p);
+});
+
 // Geometry units toggle: convert displayed geometry values
 ui.geomUnits?.addEventListener("change", () => {
   stopAnim();
@@ -767,7 +928,8 @@ ui.geomUnits?.addEventListener("change", () => {
 
   const convIds = [
     "L","platformWidth","baseWidth","baseXOffset","topXOffset",
-    "actBaseOffX","actBaseOffY","actMoveOffX","actMoveOffY"
+    "actBaseOffX","actBaseOffY","actMoveOffX","actMoveOffY",
+    "liftDepth","armThk","platThk","jointR"
   ];
 
   for(const id of convIds){
@@ -808,7 +970,8 @@ ui.btnLift.addEventListener("click", () => { stopAnim(); startAnim(+1); });
 ui.btnLower.addEventListener("click", () => { stopAnim(); startAnim(-1); });
 ui.btnStop.addEventListener("click", () => stopAnim());
 
-// Init
+// -------------------- Init --------------------
+init3D();
 updateGeomLabels(lastGeomUnits);
 updateLoadLabels(lastLoadUnits);
 refreshActuatorSelects(Math.round(Number(ui.N.value)) || 2);
