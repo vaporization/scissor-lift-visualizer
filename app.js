@@ -1,8 +1,8 @@
 // Scissor Lift Visualizer (3D render)
 // Solver is 2D (X/Y). We render solids in 3D by giving the mechanism a Z depth.
 
-import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
+import { OrbitControls } from "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -81,6 +81,9 @@ const ui = {
   glcanvas: $("glcanvas"),
   vizStatus: $("vizStatus"),
 
+  // overlay for labels
+  labelOverlay: $("labelOverlay"),
+
   btnLift: $("btnLift"),
   btnLower: $("btnLower"),
   btnStop: $("btnStop")
@@ -109,7 +112,6 @@ function fmtLenFromMeters(m, units, digits=3){
 
 function setLabelText(labelEl, text){
   if(!labelEl) return;
-  // keep it simple: replace label text node content
   const nodes = Array.from(labelEl.childNodes);
   const firstText = nodes.find(n => n.nodeType === Node.TEXT_NODE);
   if(firstText) firstText.textContent = text + "\n";
@@ -257,8 +259,30 @@ function buildSelectableKeyList(N){
   return keys;
 }
 
+// -------------------- Actuator preset (your screenshot) --------------------
+let actuatorTouchedByUser = false;
+
+function applyActuatorPresetScreenshot(geomUnits){
+  // Your screenshot: Base=BP_1, Move=PD_0, offsets: +0.5/+1.25 and -0.5/-1.25 (in)
+  // Convert to current geom units
+  const bx_m = 0.5 * M_PER_IN;
+  const by_m = 1.25 * M_PER_IN;
+  const mx_m = -0.5 * M_PER_IN;
+  const my_m = -1.25 * M_PER_IN;
+
+  ui.actBaseOffX.value = fromMeters_toGeomUnits(bx_m, geomUnits).toFixed(3);
+  ui.actBaseOffY.value = fromMeters_toGeomUnits(by_m, geomUnits).toFixed(3);
+  ui.actMoveOffX.value = fromMeters_toGeomUnits(mx_m, geomUnits).toFixed(3);
+  ui.actMoveOffY.value = fromMeters_toGeomUnits(my_m, geomUnits).toFixed(3);
+
+  // only set selects if options exist
+  if(ui.actBase && Array.from(ui.actBase.options).some(o => o.value === "BP_1")) ui.actBase.value = "BP_1";
+  if(ui.actMove && Array.from(ui.actMove.options).some(o => o.value === "PD_0")) ui.actMove.value = "PD_0";
+}
+
 function refreshActuatorSelects(N){
   const keys = buildSelectableKeyList(N);
+
   const prevBase = ui.actBase?.value || `A0`;
   const prevMove = ui.actMove?.value || (N >= 2 ? `P1` : `P0`);
 
@@ -279,6 +303,11 @@ function refreshActuatorSelects(N){
 
   ui.actBase.value = keys.includes(prevBase) ? prevBase : `A0`;
   ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
+
+  // If user hasn’t touched actuator setup yet, auto-apply your screenshot defaults (for N>=2)
+  if(!actuatorTouchedByUser && N >= 2){
+    applyActuatorPresetScreenshot(ui.geomUnits?.value || "metric");
+  }
 }
 
 // -------------------- Actuator helpers --------------------
@@ -355,7 +384,7 @@ function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
     }
   }
 
-  return { thetaDeg: 0.5*(a+b), ok:true, clamped };
+  return { thetaDeg: 0.5*(a+b), ok:true, clamped, increasing };
 }
 
 // -------------------- Warnings / outputs --------------------
@@ -517,8 +546,66 @@ let actuator = { rod:null, a:null, b:null };
 let lastN = -1;
 let lastVisualKey = "";
 
+// ---- Overlay label helpers ----
+const overlayEls = {
+  base: null,
+  move: null
+};
+
+function ensureOverlayLabels(){
+  if(!ui.labelOverlay) return;
+
+  if(!overlayEls.base){
+    overlayEls.base = document.createElement("div");
+    overlayEls.base.className = "ptLabel base";
+    overlayEls.base.innerHTML = `<span class="tag">BASE</span><span class="txt"></span>`;
+    ui.labelOverlay.appendChild(overlayEls.base);
+  }
+  if(!overlayEls.move){
+    overlayEls.move = document.createElement("div");
+    overlayEls.move.className = "ptLabel move";
+    overlayEls.move.innerHTML = `<span class="tag">MOVE</span><span class="txt"></span>`;
+    ui.labelOverlay.appendChild(overlayEls.move);
+  }
+}
+
+function setOverlayVisible(vis){
+  if(overlayEls.base) overlayEls.base.style.display = vis ? "block" : "none";
+  if(overlayEls.move) overlayEls.move.style.display = vis ? "block" : "none";
+}
+
+function projectToScreen(x, y, z=0){
+  const v = new THREE.Vector3(x, y, z);
+  v.project(camera);
+
+  const rect = ui.glcanvas.getBoundingClientRect();
+  const sx = (v.x * 0.5 + 0.5) * rect.width;
+  const sy = (-v.y * 0.5 + 0.5) * rect.height;
+  return { x:sx, y:sy, behind: v.z > 1 || v.z < -1 };
+}
+
+function updateEndpointLabels(baseKey, moveKey, p1, p2){
+  if(!ui.labelOverlay) return;
+  ensureOverlayLabels();
+
+  const show = !!ui.showPointLabels?.checked && !!ui.actEnable?.checked && p1 && p2;
+  setOverlayVisible(show);
+  if(!show) return;
+
+  const b = projectToScreen(p1.x, p1.y, 0);
+  const m = projectToScreen(p2.x, p2.y, 0);
+
+  overlayEls.base.querySelector(".txt").textContent = baseKey;
+  overlayEls.move.querySelector(".txt").textContent = moveKey;
+
+  overlayEls.base.style.left = `${b.x}px`;
+  overlayEls.base.style.top  = `${b.y}px`;
+
+  overlayEls.move.style.left = `${m.x}px`;
+  overlayEls.move.style.top  = `${m.y}px`;
+}
+
 function init3D(){
-  // Fail fast if WebGL is unavailable
   const gl = ui.glcanvas.getContext("webgl2") || ui.glcanvas.getContext("webgl");
   if(!gl){
     setStatus("WebGL context unavailable (blocked or unsupported).", "bad");
@@ -731,7 +818,7 @@ function update(){
   const moveKey = ui.actMove?.value || (p.N >= 2 ? "P1" : "P0");
 
   let thetaDeg = p.thetaDeg;
-  let actSolve = { ok:true, clamped:false };
+  let actSolve = { ok:true, clamped:false, increasing:true };
 
   if(p.actEnabled){
     const res = solveThetaFromActuatorLength(p, baseKey, moveKey, p.actLenM);
@@ -795,15 +882,35 @@ function update(){
     actP2w = pointWithXYOffset(sol, moveKey, p.actMoveOffX, p.actMoveOffY);
   }
 
+  // Update overlay labels (endpoint keys) if enabled
+  updateEndpointLabels(baseKey, moveKey, actP1w, actP2w);
+
   render3D(sol, { ...p, thetaDeg, actP1w, actP2w });
 }
 
 // -------------------- Animation --------------------
 let anim = { running:false, dir:+1, raf:0 };
 
+function actuatorLengthIncreasesWithTheta(p, baseKey, moveKey){
+  const solMin = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMin, baseWidth:p.baseWidth, platformWidth:p.platformWidth, baseXOffset:p.baseXOffset, topXOffset:p.topXOffset });
+  const solMax = solveScissor({ L:p.L, N:p.N, thetaDeg:p.thetaMax, baseWidth:p.baseWidth, platformWidth:p.platformWidth, baseXOffset:p.baseXOffset, topXOffset:p.topXOffset });
+
+  const lenMin = actuatorLength(solMin, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
+  const lenMax = actuatorLength(solMax, baseKey, moveKey, p.actBaseOffX, p.actBaseOffY, p.actMoveOffX, p.actMoveOffY);
+
+  if(!Number.isFinite(lenMin) || !Number.isFinite(lenMax)) return true;
+  return lenMax > lenMin;
+}
+
 function startAnim(dir){
   anim.running = true;
   anim.dir = dir;
+
+  // Determine whether “Lift” should increase or decrease actuator length for this placement
+  const pStart = readParams();
+  const baseKey = ui.actBase?.value || "A0";
+  const moveKey = ui.actMove?.value || (pStart.N >= 2 ? "P1" : "P0");
+  const lenIncreases = actuatorLengthIncreasesWithTheta(pStart, baseKey, moveKey);
 
   const step = () => {
     if(!anim.running) return;
@@ -816,8 +923,12 @@ function startAnim(dir){
       const max = Number(ui.actLen.max);
       const span = Math.max(1e-9, max - min);
 
+      // Lift means theta increases.
+      // If actuator length *decreases* with theta, flip the direction.
+      const effDir = anim.dir * (lenIncreases ? +1 : -1);
+
       let v = Number(ui.actLen.value);
-      v += anim.dir * speedFracPerSec * span * dt;
+      v += effDir * speedFracPerSec * span * dt;
 
       if(v >= max){ v = max; anim.running = false; }
       if(v <= min){ v = min; anim.running = false; }
@@ -863,11 +974,32 @@ function stopAnim(){
   ui.frictionPct, ui.SF, ui.nAct
 ].forEach(inp => inp && inp.addEventListener("input", () => update()));
 
-ui.actEnable?.addEventListener("change", () => { stopAnim(); update(); });
-ui.actBase?.addEventListener("change", () => { stopAnim(); update(); });
-ui.actMove?.addEventListener("change", () => { stopAnim(); update(); });
+function markActuatorTouched(){
+  actuatorTouchedByUser = true;
+}
+
+ui.actEnable?.addEventListener("change", () => {
+  stopAnim();
+
+  // If turning ON and user hasn’t touched actuator settings yet, apply your screenshot preset
+  if(ui.actEnable.checked && !actuatorTouchedByUser){
+    applyActuatorPresetScreenshot(ui.geomUnits?.value || "metric");
+  }
+
+  update();
+});
+
+ui.actBase?.addEventListener("change", () => { stopAnim(); markActuatorTouched(); update(); });
+ui.actMove?.addEventListener("change", () => { stopAnim(); markActuatorTouched(); update(); });
+
 ui.actLen?.addEventListener("input", () => { if(ui.actEnable.checked) update(); });
-ui.showPointLabels?.addEventListener("change", update);
+
+ui.showPointLabels?.addEventListener("change", () => update());
+
+ui.actBaseOffX?.addEventListener("input", () => { markActuatorTouched(); update(); });
+ui.actBaseOffY?.addEventListener("input", () => { markActuatorTouched(); update(); });
+ui.actMoveOffX?.addEventListener("input", () => { markActuatorTouched(); update(); });
+ui.actMoveOffY?.addEventListener("input", () => { markActuatorTouched(); update(); });
 
 ui.btnFit?.addEventListener("click", () => {
   const p = readParams();
@@ -925,7 +1057,14 @@ try{
   init3D();
   updateGeomLabels(lastGeomUnits);
   updateLoadLabels(lastLoadUnits);
+
   refreshActuatorSelects(Math.round(Number(ui.N.value)) || 2);
+
+  // Ensure your preset is applied on fresh load (unless user already touched settings)
+  if(!actuatorTouchedByUser){
+    applyActuatorPresetScreenshot(ui.geomUnits?.value || "metric");
+  }
+
   update();
   setStatus("Running.", "ok");
 }catch(err){

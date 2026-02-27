@@ -40,6 +40,35 @@
     .vizStatus strong { color: var(--text); font-weight: 700; }
     .vizStatus .bad { color: var(--bad); font-weight: 700; }
     .vizStatus .ok { color: var(--ok); font-weight: 700; }
+
+    /* ✅ NEW: endpoint label overlay (HTML) */
+    .canvasWrap {
+      position: relative;
+    }
+
+    #labelOverlay{
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      overflow:hidden;
+    }
+
+    .ptLabel {
+      position: absolute;
+      transform: translate(-50%, -120%);
+      font-size: 12px;
+      padding: 4px 6px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.55);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: rgba(255,255,255,0.92);
+      white-space: nowrap;
+      backdrop-filter: blur(2px);
+    }
+    .ptLabel .tag {
+      font-weight: 800;
+      margin-right: 6px;
+    }
   </style>
 </head>
 <body>
@@ -255,8 +284,11 @@
     <!-- CENTER: Visualizer -->
     <section class="panel viz">
       <h2>Visualizer</h2>
+
+      <!-- ✅ UPDATED: canvasWrap now contains labelOverlay for endpoint labels -->
       <div class="canvasWrap">
         <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
+        <div id="labelOverlay"></div>
       </div>
 
       <div id="vizStatus" class="vizStatus">Initializing…</div>
