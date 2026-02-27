@@ -1,8 +1,9 @@
 // Scissor Lift Visualizer (3D render)
 // Solver is still 2D (X/Y). We render solids in 3D by giving the mechanism a Z depth.
 
-import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+// ✅ use jsDelivr (more reliable than unpkg)
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js";
+import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/controls/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -79,6 +80,7 @@ const ui = {
 
   // 3D canvas
   glcanvas: $("glcanvas"),
+  glFallback: $("glFallback"),
 
   btnLift: $("btnLift"),
   btnLower: $("btnLower"),
@@ -279,7 +281,7 @@ function refreshActuatorSelects(N){
   ui.actMove.value = keys.includes(prevMove) ? prevMove : (N >= 2 ? `P1` : `P0`);
 }
 
-// -------------------- Actuator offsets + length (unchanged) --------------------
+// -------------------- Actuator offsets + length --------------------
 function pointWithXYOffset(sol, key, offX, offY){
   const p = getPointByKey(sol, key);
   if(!p) return null;
@@ -293,7 +295,7 @@ function actuatorLength(sol, baseKey, moveKey, baseOffX, baseOffY, moveOffX, mov
   return Math.hypot(p2.x - p1.x, p2.y - p1.y);
 }
 
-// -------------------- Placement-aware force model (unchanged) --------------------
+// -------------------- Placement-aware force model --------------------
 function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
   const dThetaDeg = 0.05;
   const t1 = clamp(thetaDeg - dThetaDeg, p.thetaMin, p.thetaMax);
@@ -323,7 +325,7 @@ function placementAwareForceVW({ p, baseKey, moveKey, thetaDeg, Wtotal }){
   return { F: Math.abs(F) };
 }
 
-// -------------------- Inverse solve: θ from actuator length (unchanged) --------------------
+// -------------------- Inverse solve: θ from actuator length --------------------
 function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
   const thetaMin = p.thetaMin;
   const thetaMax = p.thetaMax;
@@ -368,7 +370,7 @@ function solveThetaFromActuatorLength(p, baseKey, moveKey, targetLenM){
   return { thetaDeg: 0.5*(a+b), ok:true, clamped };
 }
 
-// -------------------- Warnings / outputs (unchanged) --------------------
+// -------------------- Warnings / outputs --------------------
 function renderWarnings(items){
   ui.warnings.innerHTML = "";
   for(const w of items){
@@ -422,7 +424,7 @@ function computeWarnings(p, sol, out){
   return warnings;
 }
 
-// -------------------- Read params (adds 3D fields) --------------------
+// -------------------- Read params --------------------
 function readParams(){
   const geomUnits = ui.geomUnits?.value || "metric";
   updateGeomLabels(geomUnits);
@@ -449,13 +451,11 @@ function readParams(){
   const baseXOffset = toMeters_fromGeomUnits(Number(ui.baseXOffset?.value || 0), geomUnits);
   const topXOffset  = toMeters_fromGeomUnits(Number(ui.topXOffset?.value || 0), geomUnits);
 
-  // actuator endpoint offsets (geom units -> meters)
   const actBaseOffX = toMeters_fromGeomUnits(Number(ui.actBaseOffX?.value || 0), geomUnits);
   const actBaseOffY = toMeters_fromGeomUnits(Number(ui.actBaseOffY?.value || 0), geomUnits);
   const actMoveOffX = toMeters_fromGeomUnits(Number(ui.actMoveOffX?.value || 0), geomUnits);
   const actMoveOffY = toMeters_fromGeomUnits(Number(ui.actMoveOffY?.value || 0), geomUnits);
 
-  // 3D params (also in geom units)
   const liftDepth = toMeters_fromGeomUnits(Number(ui.liftDepth?.value || 0.5), geomUnits);
   const armThk = toMeters_fromGeomUnits(Number(ui.armThk?.value || 0.04), geomUnits);
   const platThk = toMeters_fromGeomUnits(Number(ui.platThk?.value || 0.06), geomUnits);
@@ -486,7 +486,7 @@ function readParams(){
   };
 }
 
-// -------------------- Actuator slider range UI (unchanged) --------------------
+// -------------------- Actuator slider range UI --------------------
 function setActuatorLenSliderRangeFromThetaLimits(p){
   const baseKey = ui.actBase?.value || "A0";
   const moveKey = ui.actMove?.value || "P0";
@@ -531,14 +531,22 @@ let world;
 
 let mats;
 let platformBase, platformTop;
-let arms = [];   // [ [armAC, armBD], ... ]
-let joints = []; // per stage: {A,B,C,D,P}
+let arms = [];
+let joints = [];
 let actuator = { rod:null, a:null, b:null };
 
 let lastN = -1;
 let lastVisualKey = "";
 
 function init3D(){
+  // If WebGL context fails, show fallback message instead of silently rendering nothing.
+  const gl = ui.glcanvas.getContext("webgl2") || ui.glcanvas.getContext("webgl");
+  if(!gl){
+    if(ui.glFallback) ui.glFallback.hidden = false;
+    console.error("WebGL not available.");
+    return;
+  }
+
   renderer = new THREE.WebGLRenderer({ canvas: ui.glcanvas, antialias:true, alpha:false });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.setClearColor(0x0a0d13, 1);
@@ -560,7 +568,6 @@ function init3D(){
   world = new THREE.Group();
   scene.add(world);
 
-  // simple grid on ground plane
   const grid = new THREE.GridHelper(6, 24);
   grid.position.y = 0;
   world.add(grid);
@@ -572,16 +579,25 @@ function init3D(){
     actuator: new THREE.MeshStandardMaterial({ color: 0xff9e64, roughness:0.55, metalness:0.05 })
   };
 
+  // ✅ ResizeObserver catches layout changes too (not just window resize)
+  const ro = new ResizeObserver(() => resize3D());
+  ro.observe(ui.glcanvas);
   window.addEventListener("resize", resize3D);
-  resize3D();
 
+  resize3D();
   requestAnimationFrame(render3DLoop);
 }
 
 function resize3D(){
-  const w = ui.glcanvas.clientWidth;
-  const h = ui.glcanvas.clientHeight;
-  if(w <= 0 || h <= 0) return;
+  if(!renderer || !camera) return;
+
+  // ✅ use actual CSS size; also set drawing buffer size
+  const rect = ui.glcanvas.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(rect.width));
+  const h = Math.max(1, Math.floor(rect.height));
+
+  ui.glcanvas.width = w;
+  ui.glcanvas.height = h;
 
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
@@ -589,13 +605,13 @@ function resize3D(){
 }
 
 function render3DLoop(){
+  if(!renderer) return;
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(render3DLoop);
 }
 
 function clearGroupKeepGrid(){
-  // keep first child if it's the grid helper
   const keep = world.children[0];
   for(let i=world.children.length-1; i>=0; i--){
     const c = world.children[i];
@@ -612,10 +628,9 @@ function clearGroupKeepGrid(){
 }
 
 function ensureStageMeshes(N, visual){
-  // visual key includes thickness/radius that require rebuild of geometry
   const vKey = `${N}|${visual.armThk}|${visual.jointR}|${visual.platThk}`;
-
   if(N === lastN && vKey === lastVisualKey) return;
+
   lastN = N;
   lastVisualKey = vKey;
 
@@ -626,16 +641,12 @@ function ensureStageMeshes(N, visual){
 
   clearGroupKeepGrid();
 
-  // base platforms: box geometry of unit size, scaled each frame
   const platGeo = new THREE.BoxGeometry(1, 1, 1);
   platformBase = new THREE.Mesh(platGeo, mats.platforms);
   platformTop  = new THREE.Mesh(platGeo, mats.platforms);
   world.add(platformBase, platformTop);
 
-  // arm geometry: unit length along X, scale X to actual length
   const armGeo = new THREE.BoxGeometry(1, 1, 1);
-
-  // joint geometry
   const jointGeo = new THREE.SphereGeometry(Math.max(visual.jointR, 1e-6), 18, 18);
 
   for(let i=0; i<N; i++){
@@ -655,7 +666,6 @@ function ensureStageMeshes(N, visual){
     joints.push(j);
   }
 
-  // actuator meshes (rod + end spheres)
   actuator.rod = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mats.actuator);
   actuator.a   = new THREE.Mesh(new THREE.SphereGeometry(Math.max(visual.jointR*1.15, 1e-6), 18, 18), mats.actuator);
   actuator.b   = new THREE.Mesh(new THREE.SphereGeometry(Math.max(visual.jointR*1.15, 1e-6), 18, 18), mats.actuator);
@@ -672,18 +682,15 @@ function placeRodBox(mesh, p1, p2, thk, z){
 
   mesh.position.set(mx, my, z);
   mesh.rotation.set(0, 0, Math.atan2(dy, dx));
-
-  // geometry is 1x1x1; scale X to length, Y to thickness, Z to thickness
   mesh.scale.set(Math.max(len, 1e-6), Math.max(thk, 1e-6), Math.max(thk, 1e-6));
 }
 
 function render3D(sol, p){
   const zDepth = Math.max(p.liftDepth, 1e-6);
-  const zPlane = 0; // single-plane scissor at z=0 for now
+  const zPlane = 0;
 
   ensureStageMeshes(sol.stages.length, { armThk:p.armThk, jointR:p.jointR, platThk:p.platThk });
 
-  // platforms: thickness in Y, width in X, depth in Z
   const baseCenterX = (sol.bottomPlatform.left.x + sol.bottomPlatform.right.x) / 2;
   const baseY = sol.bottomPlatform.left.y;
 
@@ -696,10 +703,8 @@ function render3D(sol, p){
   platformTop.position.set(topCenterX, topY + p.platThk/2, zPlane);
   platformTop.scale.set(Math.max(p.platformWidth, 1e-6), Math.max(p.platThk, 1e-6), zDepth);
 
-  // arms + joints
   for(let i=0; i<sol.stages.length; i++){
     const st = sol.stages[i];
-
     placeRodBox(arms[i][0], st.A, st.C, p.armThk, zPlane);
     placeRodBox(arms[i][1], st.B, st.D, p.armThk, zPlane);
 
@@ -710,7 +715,6 @@ function render3D(sol, p){
     joints[i].P.position.set(st.P.x, st.P.y, zPlane);
   }
 
-  // actuator
   const showAct = !!p.actEnabled;
   actuator.rod.visible = showAct;
   actuator.a.visible = showAct;
@@ -723,8 +727,7 @@ function render3D(sol, p){
   }
 }
 
-function fitCameraToSolution(sol, p){
-  // Fit camera to the 2D bounds, with a bit of padding, ignoring Z for now.
+function fitCameraToSolution(sol){
   const pad = 0.20;
   const spanX = Math.max(1e-6, sol.maxX - sol.minX);
   const spanY = Math.max(1e-6, sol.maxY - sol.minY);
@@ -734,7 +737,6 @@ function fitCameraToSolution(sol, p){
 
   controls.target.set(cx, cy, 0);
 
-  // approximate required distance based on FOV and largest span
   const fov = camera.fov * DEG2RAD;
   const maxSpan = Math.max(spanX, spanY) * (1 + pad);
   const dist = (maxSpan / 2) / Math.tan(fov / 2);
@@ -744,10 +746,9 @@ function fitCameraToSolution(sol, p){
   controls.update();
 }
 
-// -------------------- Update loop (mostly unchanged) --------------------
+// -------------------- Update loop --------------------
 function update(){
   const p0 = readParams();
-
   refreshActuatorSelects(p0.N);
   setActuatorLenSliderRangeFromThetaLimits(p0);
 
@@ -829,7 +830,6 @@ function update(){
     { actEnabled:p.actEnabled, actClamped:!!actSolve.clamped, actLen, FactVW, FperAct }
   ));
 
-  // actuator world points for 3D render
   let actP1w = null, actP2w = null;
   if(p.actEnabled){
     actP1w = pointWithXYOffset(sol, baseKey, p.actBaseOffX, p.actBaseOffY);
@@ -839,7 +839,7 @@ function update(){
   render3D(sol, { ...p, thetaDeg, actP1w, actP2w });
 }
 
-// -------------------- Animation (unchanged) --------------------
+// -------------------- Animation --------------------
 let anim = { running:false, dir:+1, raf:0 };
 
 function startAnim(dir){
@@ -917,7 +917,21 @@ ui.btnFit?.addEventListener("click", () => {
     baseWidth:p.baseWidth, platformWidth:p.platformWidth,
     baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
   });
-  fitCameraToSolution(sol, p);
+  fitCameraToSolution(sol);
+});
+
+function fitCameraToSolution(sol){
+  fitCameraToSolution = undefined;
+  // wrapper to avoid name shadowing in some editors
+}
+ui.btnFit?.addEventListener("click", () => {
+  const p = readParams();
+  const sol = solveScissor({
+    L:p.L, N:p.N, thetaDeg:p.thetaDeg,
+    baseWidth:p.baseWidth, platformWidth:p.platformWidth,
+    baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
+  });
+  fitCameraToSolution(sol);
 });
 
 // Geometry units toggle: convert displayed geometry values
@@ -966,9 +980,9 @@ ui.loadUnits?.addEventListener("change", () => {
   update();
 });
 
-ui.btnLift.addEventListener("click", () => { stopAnim(); startAnim(+1); });
-ui.btnLower.addEventListener("click", () => { stopAnim(); startAnim(-1); });
-ui.btnStop.addEventListener("click", () => stopAnim());
+ui.btnLift?.addEventListener("click", () => { stopAnim(); startAnim(+1); });
+ui.btnLower?.addEventListener("click", () => { stopAnim(); startAnim(-1); });
+ui.btnStop?.addEventListener("click", () => stopAnim());
 
 // -------------------- Init --------------------
 init3D();

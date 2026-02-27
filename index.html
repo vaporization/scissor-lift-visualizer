@@ -85,7 +85,7 @@
         </label>
       </div>
 
-      <!-- NEW: 3D view controls -->
+      <!-- 3D view controls -->
       <div class="group">
         <h3>3D View</h3>
 
@@ -221,7 +221,11 @@
       <h2>Visualizer</h2>
       <div class="canvasWrap">
         <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
+        <div id="glFallback" class="glFallback" hidden>
+          WebGL failed to initialize. Check browser security settings / GPU acceleration.
+        </div>
       </div>
+
       <div class="legend">
         <span class="dot fixed"></span> fixed pivot
         <span class="dot joint"></span> joint
@@ -269,7 +273,6 @@
     Geometry-first: solve θ → everything else follows. If actuator enabled: solve θ from actuator length.
   </footer>
 
-  <!-- IMPORTANT: app.js is now a module -->
   <script type="module" src="app.js"></script>
 </body>
 </html>

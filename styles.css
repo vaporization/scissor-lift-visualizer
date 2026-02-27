@@ -127,8 +127,29 @@ button:hover{ filter:brightness(1.06); }
   border-radius:14px;
   overflow:hidden;
   background:#0a0d13;
+
+  /* ✅ give it a real height */
+  height:560px;
+  position:relative;
 }
-#svg{ width:100%; height:560px; display:block; }
+
+#glcanvas{
+  width:100%;
+  height:100%;
+  display:block;
+}
+
+.glFallback{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--muted);
+  font-size:13px;
+  padding:16px;
+  text-align:center;
+}
 
 .legend{
   margin-top:10px;
