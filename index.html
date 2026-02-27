@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Scissor Lift Visualizer (3D)</title>
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- ✅ Import map so OrbitControls can resolve `import ... from "three"` -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+      "three/": "https://unpkg.com/three@0.161.0/"
+    }
+  }
+  </script>
+
   <style>
     /* Canvas + SVG share the same viewport */
     #glcanvas, #svg {
@@ -25,6 +36,7 @@
       padding: 8px 10px;
       background: rgba(0,0,0,.15);
     }
+
     .vizStatus strong { color: var(--text); font-weight: 700; }
     .vizStatus .bad { color: var(--bad); font-weight: 700; }
     .vizStatus .ok { color: var(--ok); font-weight: 700; }
@@ -241,23 +253,23 @@
     </section>
 
     <!-- CENTER: Visualizer -->
-<section class="panel viz">
-  <h2>Visualizer</h2>
-  <div class="canvasWrap">
-    <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
-  </div>
+    <section class="panel viz">
+      <h2>Visualizer</h2>
+      <div class="canvasWrap">
+        <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
+      </div>
 
-  <div id="vizStatus" class="vizStatus">Initializing…</div>
+      <div id="vizStatus" class="vizStatus">Initializing…</div>
 
-  <div class="legend">
-    <span class="dot fixed"></span> fixed pivot
-    <span class="dot joint"></span> joint
-    <span class="dot point"></span> selectable point
-    <span class="line arms"></span> arms
-    <span class="line actuator"></span> actuator
-    <span class="line platform"></span> platforms
-  </div>
-</section>
+      <div class="legend">
+        <span class="dot fixed"></span> fixed pivot
+        <span class="dot joint"></span> joint
+        <span class="dot point"></span> selectable point
+        <span class="line arms"></span> arms
+        <span class="line actuator"></span> actuator
+        <span class="line platform"></span> platforms
+      </div>
+    </section>
 
     <!-- RIGHT: Outputs -->
     <section class="panel">

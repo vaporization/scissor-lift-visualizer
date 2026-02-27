@@ -1,8 +1,8 @@
 // Scissor Lift Visualizer (3D render)
 // Solver is 2D (X/Y). We render solids in 3D by giving the mechanism a Z depth.
 
-import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
 
