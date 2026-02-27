@@ -25,6 +25,38 @@
     }
     #svg { display: none; }
 
+    /* Ensure overlay positioning works */
+    .canvasWrap{
+      position: relative;
+    }
+
+    /* Label overlay that sits on top of the WebGL canvas */
+    .labelLayer{
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .ptLabel{
+      position: absolute;
+      transform: translate(-50%, -115%);
+      padding: 3px 6px;
+      border-radius: 8px;
+      font-size: 11px;
+      line-height: 1;
+      letter-spacing: .2px;
+      color: rgba(255,255,255,.92);
+      background: rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,.14);
+      white-space: nowrap;
+      user-select: none;
+      backdrop-filter: blur(4px);
+    }
+
+    .ptLabel.base { border-color: rgba(122,162,247,.55); }
+    .ptLabel.move { border-color: rgba(255,158,100,.55); }
+
     /* status overlay inside the viz panel */
     .vizStatus {
       margin-top: 8px;
@@ -40,35 +72,6 @@
     .vizStatus strong { color: var(--text); font-weight: 700; }
     .vizStatus .bad { color: var(--bad); font-weight: 700; }
     .vizStatus .ok { color: var(--ok); font-weight: 700; }
-
-    /* ✅ NEW: endpoint label overlay (HTML) */
-    .canvasWrap {
-      position: relative;
-    }
-
-    #labelOverlay{
-      position:absolute;
-      inset:0;
-      pointer-events:none;
-      overflow:hidden;
-    }
-
-    .ptLabel {
-      position: absolute;
-      transform: translate(-50%, -120%);
-      font-size: 12px;
-      padding: 4px 6px;
-      border-radius: 8px;
-      background: rgba(0,0,0,0.55);
-      border: 1px solid rgba(255,255,255,0.15);
-      color: rgba(255,255,255,0.92);
-      white-space: nowrap;
-      backdrop-filter: blur(2px);
-    }
-    .ptLabel .tag {
-      font-weight: 800;
-      margin-right: 6px;
-    }
   </style>
 </head>
 <body>
@@ -284,11 +287,11 @@
     <!-- CENTER: Visualizer -->
     <section class="panel viz">
       <h2>Visualizer</h2>
-
-      <!-- ✅ UPDATED: canvasWrap now contains labelOverlay for endpoint labels -->
       <div class="canvasWrap">
         <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
-        <div id="labelOverlay"></div>
+
+        <!-- ✅ Labels overlay: app.js will position labels here every frame -->
+        <div id="labelLayer" class="labelLayer" aria-hidden="true"></div>
       </div>
 
       <div id="vizStatus" class="vizStatus">Initializing…</div>
