@@ -512,8 +512,8 @@ let world;
 
 let mats;
 let platformBase, platformTop;
-let arms = [];   // [ [armAC, armBD], ... ]
-let joints = []; // per stage: {A,B,C,D,P}
+let arms = [];   // per stage: { L:{AC,BD}, R:{AC,BD} }
+let joints = []; // per stage: { L:{A,B,C,D,P}, R:{A,B,C,D,P} }
 let actuator = { rod:null, a:null, b:null };
 
 let lastN = -1;
@@ -713,22 +713,36 @@ function ensureStageMeshes(N, visual){
   const jointGeo = new THREE.SphereGeometry(Math.max(visual.jointR, 1e-6), 18, 18);
 
   for(let i=0; i<N; i++){
-    const armAC = new THREE.Mesh(armGeo, mats.arms);
-    const armBD = new THREE.Mesh(armGeo, mats.arms);
-    world.add(armAC, armBD);
-    arms.push([armAC, armBD]);
+    // ---- arms (left + right) ----
+    const armAC_L = new THREE.Mesh(armGeo, mats.arms);
+    const armBD_L = new THREE.Mesh(armGeo, mats.arms);
+    const armAC_R = new THREE.Mesh(armGeo, mats.arms);
+    const armBD_R = new THREE.Mesh(armGeo, mats.arms);
+    world.add(armAC_L, armBD_L, armAC_R, armBD_R);
 
-    const j = {
+    arms.push({
+      L: { AC: armAC_L, BD: armBD_L },
+      R: { AC: armAC_R, BD: armBD_R }
+    });
+
+    // ---- joints (left + right) ----
+    const makeJointSet = () => ({
       A: new THREE.Mesh(jointGeo, mats.joints),
       B: new THREE.Mesh(jointGeo, mats.joints),
       C: new THREE.Mesh(jointGeo, mats.joints),
       D: new THREE.Mesh(jointGeo, mats.joints),
       P: new THREE.Mesh(jointGeo, mats.joints)
-    };
-    Object.values(j).forEach(m => world.add(m));
-    joints.push(j);
+    });
+
+    const JL = makeJointSet();
+    const JR = makeJointSet();
+    Object.values(JL).forEach(m => world.add(m));
+    Object.values(JR).forEach(m => world.add(m));
+
+    joints.push({ L: JL, R: JR });
   }
 
+  // actuator (still box + spheres for now)
   actuator.rod = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mats.actuator);
   actuator.a   = new THREE.Mesh(new THREE.SphereGeometry(Math.max(visual.jointR*1.15, 1e-6), 18, 18), mats.actuator);
   actuator.b   = new THREE.Mesh(new THREE.SphereGeometry(Math.max(visual.jointR*1.15, 1e-6), 18, 18), mats.actuator);
@@ -750,7 +764,11 @@ function placeRodBox(mesh, p1, p2, thk, z){
 
 function render3D(sol, p){
   const zDepth = Math.max(p.liftDepth, 1e-6);
-  const zPlane = 0;
+
+  const halfDepth = zDepth / 2;
+  const zLeft   = -halfDepth + p.armThk / 2;
+  const zRight  =  halfDepth - p.armThk / 2;
+  const zCenter = 0;
 
   ensureStageMeshes(sol.stages.length, { armThk:p.armThk, jointR:p.jointR, platThk:p.platThk });
 
@@ -760,37 +778,52 @@ function render3D(sol, p){
   const topCenterX = (sol.topPlatform.left.x + sol.topPlatform.right.x) / 2;
   const topY = sol.topPlatform.left.y;
 
-  platformBase.position.set(baseCenterX, baseY - p.platThk/2, zPlane);
+  // platforms span full depth, centered in Z
+  platformBase.position.set(baseCenterX, baseY - p.platThk/2, zCenter);
   platformBase.scale.set(Math.max(p.baseWidth, 1e-6), Math.max(p.platThk, 1e-6), zDepth);
 
-  platformTop.position.set(topCenterX, topY + p.platThk/2, zPlane);
+  platformTop.position.set(topCenterX, topY + p.platThk/2, zCenter);
   platformTop.scale.set(Math.max(p.platformWidth, 1e-6), Math.max(p.platThk, 1e-6), zDepth);
 
   for(let i=0; i<sol.stages.length; i++){
     const st = sol.stages[i];
 
-    placeRodBox(arms[i][0], st.A, st.C, p.armThk, zPlane);
-    placeRodBox(arms[i][1], st.B, st.D, p.armThk, zPlane);
+    // LEFT scissor arms
+    placeRodBox(arms[i].L.AC, st.A, st.C, p.armThk, zLeft);
+    placeRodBox(arms[i].L.BD, st.B, st.D, p.armThk, zLeft);
 
-    joints[i].A.position.set(st.A.x, st.A.y, zPlane);
-    joints[i].B.position.set(st.B.x, st.B.y, zPlane);
-    joints[i].C.position.set(st.C.x, st.C.y, zPlane);
-    joints[i].D.position.set(st.D.x, st.D.y, zPlane);
-    joints[i].P.position.set(st.P.x, st.P.y, zPlane);
+    // RIGHT scissor arms
+    placeRodBox(arms[i].R.AC, st.A, st.C, p.armThk, zRight);
+    placeRodBox(arms[i].R.BD, st.B, st.D, p.armThk, zRight);
+
+    // LEFT joints
+    joints[i].L.A.position.set(st.A.x, st.A.y, zLeft);
+    joints[i].L.B.position.set(st.B.x, st.B.y, zLeft);
+    joints[i].L.C.position.set(st.C.x, st.C.y, zLeft);
+    joints[i].L.D.position.set(st.D.x, st.D.y, zLeft);
+    joints[i].L.P.position.set(st.P.x, st.P.y, zLeft);
+
+    // RIGHT joints
+    joints[i].R.A.position.set(st.A.x, st.A.y, zRight);
+    joints[i].R.B.position.set(st.B.x, st.B.y, zRight);
+    joints[i].R.C.position.set(st.C.x, st.C.y, zRight);
+    joints[i].R.D.position.set(st.D.x, st.D.y, zRight);
+    joints[i].R.P.position.set(st.P.x, st.P.y, zRight);
   }
 
+  // actuator stays centered
   const showAct = !!p.actEnabled;
   actuator.rod.visible = showAct;
   actuator.a.visible = showAct;
   actuator.b.visible = showAct;
 
   if(showAct && p.actP1w && p.actP2w){
-    placeRodBox(actuator.rod, p.actP1w, p.actP2w, Math.max(p.armThk*0.85, 1e-6), zPlane);
-    actuator.a.position.set(p.actP1w.x, p.actP1w.y, zPlane);
-    actuator.b.position.set(p.actP2w.x, p.actP2w.y, zPlane);
+    placeRodBox(actuator.rod, p.actP1w, p.actP2w, Math.max(p.armThk*0.85, 1e-6), zCenter);
+    actuator.a.position.set(p.actP1w.x, p.actP1w.y, zCenter);
+    actuator.b.position.set(p.actP2w.x, p.actP2w.y, zCenter);
   }
 
-  // ✅ cache for label projection in render loop
+  // cache for label projection
   lastSolForLabels = sol;
   lastPForLabels = p;
 }
