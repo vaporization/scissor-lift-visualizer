@@ -5,6 +5,30 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Scissor Lift Visualizer (3D)</title>
   <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Canvas + SVG share the same viewport */
+    #glcanvas, #svg {
+      width: 100%;
+      height: 560px;
+      display: block;
+    }
+    #svg { display: none; }
+
+    /* status overlay inside the viz panel */
+    .vizStatus {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(0,0,0,.15);
+    }
+    .vizStatus strong { color: var(--text); font-weight: 700; }
+    .vizStatus .bad { color: var(--bad); font-weight: 700; }
+    .vizStatus .ok { color: var(--ok); font-weight: 700; }
+  </style>
 </head>
 <body>
   <header class="topbar">
@@ -219,11 +243,20 @@
     <!-- CENTER: Visualizer -->
     <section class="panel viz">
       <h2>Visualizer</h2>
+
       <div class="canvasWrap">
+        <!-- 3D -->
         <canvas id="glcanvas" role="img" aria-label="Scissor lift 3D visualizer"></canvas>
-        <div id="glFallback" class="glFallback" hidden>
-          WebGL failed to initialize. Check browser security settings / GPU acceleration.
-        </div>
+
+        <!-- 2D fallback -->
+        <svg id="svg" viewBox="0 0 1000 700" role="img" aria-label="Scissor lift 2D visualizer (fallback)">
+          <rect x="0" y="0" width="1000" height="700" class="bg" />
+          <g id="scene"></g>
+        </svg>
+      </div>
+
+      <div id="vizStatus" class="vizStatus">
+        <strong>Status:</strong> Initializing…
       </div>
 
       <div class="legend">

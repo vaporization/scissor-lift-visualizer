@@ -1,9 +1,8 @@
-// Scissor Lift Visualizer (3D render)
-// Solver is still 2D (X/Y). We render solids in 3D by giving the mechanism a Z depth.
+// Scissor Lift Visualizer (3D render + 2D fallback)
+// Solver is 2D (X/Y). If WebGL is unavailable, we render the same solution in SVG.
 
-// ✅ use jsDelivr (more reliable than unpkg)
-import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js";
-import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/controls/OrbitControls.js";
+import * as THREE from "https://unpkg.com/three@0.161.0/build/three.module.js";
+import { OrbitControls } from "https://unpkg.com/three@0.161.0/examples/jsm/controls/OrbitControls.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -46,7 +45,7 @@ const ui = {
   label_actLen: $("label_actLen"),
   showPointLabels: $("showPointLabels"),
 
-  // actuator endpoint offsets (WORLD X/Y, in geom units)
+  // actuator endpoint offsets
   actBaseOffX: $("actBaseOffX"),
   actBaseOffY: $("actBaseOffY"),
   actMoveOffX: $("actMoveOffX"),
@@ -78,9 +77,11 @@ const ui = {
 
   warnings: $("warnings"),
 
-  // 3D canvas
+  // viewports
   glcanvas: $("glcanvas"),
-  glFallback: $("glFallback"),
+  svg: $("svg"),
+  scene2d: $("scene"),
+  vizStatus: $("vizStatus"),
 
   btnLift: $("btnLift"),
   btnLower: $("btnLower"),
@@ -141,7 +142,7 @@ function updateLoadLabels(units){
   setLabelText(ui.label_WarmsStage, `Arm weight per stage (${u})`);
 }
 
-// -------------------- Geometry Solver (unchanged) --------------------
+// -------------------- Geometry Solver --------------------
 function solveScissor({ L, N, thetaDeg, baseWidth, platformWidth, baseXOffset, topXOffset }){
   const theta = thetaDeg * DEG2RAD;
   const h = L * Math.sin(theta);
@@ -199,7 +200,7 @@ function solveScissor({ L, N, thetaDeg, baseWidth, platformWidth, baseXOffset, t
   return { theta, h, w, H, stages, bottomPlatform, topPlatform, minX, maxX, minY, maxY };
 }
 
-// -------------------- Selectable points (unchanged) --------------------
+// -------------------- Selectable points --------------------
 function lerpPoint(p1, p2, t){ return { x: p1.x + (p2.x-p1.x)*t, y: p1.y + (p2.y-p1.y)*t }; }
 
 function getSelectablePointsForStage(sol, i){
@@ -433,7 +434,7 @@ function readParams(){
   updateLoadLabels(loadUnits);
 
   const L = toMeters_fromGeomUnits(Number(ui.L.value), geomUnits);
-  const N = Math.round(Number(ui.N.value));
+  const N = Math.max(1, Math.round(Number(ui.N.value)));
   const thetaMin = Number(ui.thetaMin.value);
   const thetaMax = Number(ui.thetaMax.value);
 
@@ -520,12 +521,84 @@ function setActuatorLenSliderRangeFromThetaLimits(p){
 function updateDriveUI(p){
   ui.theta.disabled = p.actEnabled;
   ui.actLen.disabled = !p.actEnabled;
-
   const disp = fromMeters_toGeomUnits(p.actLenM, p.geomUnits);
   ui.actLenReadout.textContent = `${disp.toFixed(3)} ${unitLabelGeom(p.geomUnits)}`;
 }
 
-// ==================== 3D Renderer ====================
+// ============================================================
+// 2D SVG renderer (fallback)
+// ============================================================
+function clear2D(){ while(ui.scene2d.firstChild) ui.scene2d.removeChild(ui.scene2d.firstChild); }
+function svgEl(name, attrs={}){
+  const n = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for(const [k,v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+  return n;
+}
+function makeViewportTransform(sol){
+  const margin = 0.18;
+  const spanX = Math.max(1e-6, sol.maxX - sol.minX);
+  const spanY = Math.max(1e-6, sol.maxY - sol.minY);
+
+  const minX = sol.minX - margin * spanX;
+  const maxX = sol.maxX + margin * spanX;
+  const minY = sol.minY - margin * spanY;
+  const maxY = sol.maxY + margin * spanY + (sol.h || 0);
+
+  const viewW = 1000, viewH = 700;
+  const worldW = Math.max(1e-6, maxX - minX);
+  const worldH = Math.max(1e-6, maxY - minY);
+
+  const s = Math.min(viewW/worldW, viewH/worldH);
+  const tx = (viewW - worldW*s)/2 - minX*s;
+  const ty = (viewH - worldH*s)/2 + maxY*s;
+
+  return { toScreen: (p) => ({ x: p.x*s + tx, y: -p.y*s + ty }) };
+}
+function draw2D(sol, p){
+  clear2D();
+  const { toScreen } = makeViewportTransform(sol);
+
+  const bpL = toScreen(sol.bottomPlatform.left);
+  const bpR = toScreen(sol.bottomPlatform.right);
+  const tpL = toScreen(sol.topPlatform.left);
+  const tpR = toScreen(sol.topPlatform.right);
+
+  ui.scene2d.appendChild(svgEl("line", { x1:bpL.x, y1:bpL.y, x2:bpR.x, y2:bpR.y, stroke:"#a9b1c3", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
+  ui.scene2d.appendChild(svgEl("line", { x1:tpL.x, y1:tpL.y, x2:tpR.x, y2:tpR.y, stroke:"#a9b1c3", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
+
+  for(const st of sol.stages){
+    const A = toScreen(st.A), B = toScreen(st.B), C = toScreen(st.C), D = toScreen(st.D);
+    ui.scene2d.appendChild(svgEl("line", { x1:A.x, y1:A.y, x2:C.x, y2:C.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
+    ui.scene2d.appendChild(svgEl("line", { x1:B.x, y1:B.y, x2:D.x, y2:D.y, stroke:"#c3e88d", "stroke-width":5, "stroke-linecap":"round" }));
+  }
+
+  // actuator line (if enabled)
+  if(p.actEnabled && p.actP1w && p.actP2w){
+    const p1 = toScreen(p.actP1w);
+    const p2 = toScreen(p.actP2w);
+    ui.scene2d.appendChild(svgEl("line", { x1:p1.x, y1:p1.y, x2:p2.x, y2:p2.y, stroke:"#ff9e64", "stroke-width":6, "stroke-linecap":"round", opacity:0.95 }));
+    ui.scene2d.appendChild(svgEl("circle", { cx:p1.x, cy:p1.y, r:7, fill:"#ff9e64" }));
+    ui.scene2d.appendChild(svgEl("circle", { cx:p2.x, cy:p2.y, r:7, fill:"#ff9e64" }));
+  }
+
+  // joints
+  for(const pt of [sol.bottomPlatform.pivL, sol.bottomPlatform.pivR]){
+    const s = toScreen(pt);
+    ui.scene2d.appendChild(svgEl("circle", { cx:s.x, cy:s.y, r:7, fill:"#7aa2f7" }));
+  }
+  for(const st of sol.stages){
+    for(const pt of [st.A, st.B, st.C, st.D, st.P]){
+      const s = toScreen(pt);
+      ui.scene2d.appendChild(svgEl("circle", { cx:s.x, cy:s.y, r:5, fill:"#c3e88d" }));
+    }
+  }
+}
+
+// ============================================================
+// 3D renderer (only used when WebGL works)
+// ============================================================
+let webglOk = false;
+
 let renderer, scene, camera, controls;
 let world;
 
@@ -538,16 +611,53 @@ let actuator = { rod:null, a:null, b:null };
 let lastN = -1;
 let lastVisualKey = "";
 
+function status(html){
+  if(ui.vizStatus) ui.vizStatus.innerHTML = html;
+}
+
+function canCreateWebGLContext(canvas){
+  // Try both WebGL2 and WebGL1. If both fail, WebGL is blocked/disabled.
+  const gl2 = canvas.getContext("webgl2", { antialias:true, alpha:false });
+  if(gl2) return true;
+  const gl1 = canvas.getContext("webgl", { antialias:true, alpha:false }) || canvas.getContext("experimental-webgl");
+  return !!gl1;
+}
+
+function use2DFallback(reason){
+  webglOk = false;
+  ui.glcanvas.style.display = "none";
+  ui.svg.style.display = "block";
+  status(`<span class="bad">WebGL unavailable.</span> Using <strong>2D fallback</strong>.<br>${reason}`);
+}
+
+function use3D(){
+  webglOk = true;
+  ui.glcanvas.style.display = "block";
+  ui.svg.style.display = "none";
+  status(`<span class="ok">WebGL OK.</span> Using <strong>3D view</strong> (orbit/zoom/pan).`);
+}
+
 function init3D(){
-  // If WebGL context fails, show fallback message instead of silently rendering nothing.
-  const gl = ui.glcanvas.getContext("webgl2") || ui.glcanvas.getContext("webgl");
-  if(!gl){
-    if(ui.glFallback) ui.glFallback.hidden = false;
-    console.error("WebGL not available.");
+  // Preflight BEFORE Three.js tries to create a renderer
+  if(!canCreateWebGLContext(ui.glcanvas)){
+    use2DFallback(`Your browser/GPU could not create a WebGL context (common on managed PCs, Remote Desktop/VM, disabled WebGL policy, or old GPU drivers).`);
     return;
   }
 
-  renderer = new THREE.WebGLRenderer({ canvas: ui.glcanvas, antialias:true, alpha:false });
+  try{
+    renderer = new THREE.WebGLRenderer({
+      canvas: ui.glcanvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: "high-performance"
+    });
+  } catch (e){
+    use2DFallback(`Three.js renderer creation threw an error: ${String(e?.message || e)}`);
+    return;
+  }
+
+  use3D();
+
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.setClearColor(0x0a0d13, 1);
 
@@ -579,25 +689,17 @@ function init3D(){
     actuator: new THREE.MeshStandardMaterial({ color: 0xff9e64, roughness:0.55, metalness:0.05 })
   };
 
-  // ✅ ResizeObserver catches layout changes too (not just window resize)
-  const ro = new ResizeObserver(() => resize3D());
-  ro.observe(ui.glcanvas);
   window.addEventListener("resize", resize3D);
-
   resize3D();
+
   requestAnimationFrame(render3DLoop);
 }
 
 function resize3D(){
-  if(!renderer || !camera) return;
-
-  // ✅ use actual CSS size; also set drawing buffer size
-  const rect = ui.glcanvas.getBoundingClientRect();
-  const w = Math.max(1, Math.floor(rect.width));
-  const h = Math.max(1, Math.floor(rect.height));
-
-  ui.glcanvas.width = w;
-  ui.glcanvas.height = h;
+  if(!webglOk) return;
+  const w = ui.glcanvas.clientWidth;
+  const h = ui.glcanvas.clientHeight;
+  if(w <= 0 || h <= 0) return;
 
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
@@ -605,13 +707,14 @@ function resize3D(){
 }
 
 function render3DLoop(){
-  if(!renderer) return;
+  if(!webglOk) return; // no loop if WebGL is off
   controls.update();
   renderer.render(scene, camera);
   requestAnimationFrame(render3DLoop);
 }
 
 function clearGroupKeepGrid(){
+  if(!webglOk) return;
   const keep = world.children[0];
   for(let i=world.children.length-1; i>=0; i--){
     const c = world.children[i];
@@ -628,6 +731,7 @@ function clearGroupKeepGrid(){
 }
 
 function ensureStageMeshes(N, visual){
+  if(!webglOk) return;
   const vKey = `${N}|${visual.armThk}|${visual.jointR}|${visual.platThk}`;
   if(N === lastN && vKey === lastVisualKey) return;
 
@@ -686,6 +790,8 @@ function placeRodBox(mesh, p1, p2, thk, z){
 }
 
 function render3D(sol, p){
+  if(!webglOk) return;
+
   const zDepth = Math.max(p.liftDepth, 1e-6);
   const zPlane = 0;
 
@@ -728,6 +834,7 @@ function render3D(sol, p){
 }
 
 function fitCameraToSolution(sol){
+  if(!webglOk) return;
   const pad = 0.20;
   const spanX = Math.max(1e-6, sol.maxX - sol.minX);
   const spanY = Math.max(1e-6, sol.maxY - sol.minY);
@@ -830,13 +937,20 @@ function update(){
     { actEnabled:p.actEnabled, actClamped:!!actSolve.clamped, actLen, FactVW, FperAct }
   ));
 
+  // actuator world points for render
   let actP1w = null, actP2w = null;
   if(p.actEnabled){
     actP1w = pointWithXYOffset(sol, baseKey, p.actBaseOffX, p.actBaseOffY);
     actP2w = pointWithXYOffset(sol, moveKey, p.actMoveOffX, p.actMoveOffY);
   }
 
-  render3D(sol, { ...p, thetaDeg, actP1w, actP2w });
+  const renderPayload = { ...p, thetaDeg, actP1w, actP2w };
+
+  if(webglOk){
+    render3D(sol, renderPayload);
+  } else {
+    draw2D(sol, renderPayload);
+  }
 }
 
 // -------------------- Animation --------------------
@@ -917,24 +1031,21 @@ ui.btnFit?.addEventListener("click", () => {
     baseWidth:p.baseWidth, platformWidth:p.platformWidth,
     baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
   });
-  fitCameraToSolution(sol);
+  fitCameraToSolution(sol, p);
 });
 
 function fitCameraToSolution(sol){
-  fitCameraToSolution = undefined;
-  // wrapper to avoid name shadowing in some editors
+  fitCameraToSolution = undefined; // (avoid accidental recursion if renamed)
+  fitCameraToSolution = () => {};
+  // rebind:
+  fitCameraToSolution = (sol2) => fitCameraToSolutionImpl(sol2);
 }
-ui.btnFit?.addEventListener("click", () => {
-  const p = readParams();
-  const sol = solveScissor({
-    L:p.L, N:p.N, thetaDeg:p.thetaDeg,
-    baseWidth:p.baseWidth, platformWidth:p.platformWidth,
-    baseXOffset:p.baseXOffset, topXOffset:p.topXOffset
-  });
-  fitCameraToSolution(sol);
-});
+function fitCameraToSolutionImpl(sol){
+  fitCameraToSolutionImpl = fitCameraToSolutionImpl || (()=>{});
+  fitCameraToSolutionImpl(sol);
+}
 
-// Geometry units toggle: convert displayed geometry values
+// Geometry units toggle
 ui.geomUnits?.addEventListener("change", () => {
   stopAnim();
   const newUnits = ui.geomUnits.value;
@@ -958,7 +1069,7 @@ ui.geomUnits?.addEventListener("change", () => {
   update();
 });
 
-// Load units toggle: convert displayed load values
+// Load units toggle
 ui.loadUnits?.addEventListener("change", () => {
   stopAnim();
   const newUnits = ui.loadUnits.value;
@@ -980,13 +1091,17 @@ ui.loadUnits?.addEventListener("change", () => {
   update();
 });
 
-ui.btnLift?.addEventListener("click", () => { stopAnim(); startAnim(+1); });
-ui.btnLower?.addEventListener("click", () => { stopAnim(); startAnim(-1); });
-ui.btnStop?.addEventListener("click", () => stopAnim());
+ui.btnLift.addEventListener("click", () => { stopAnim(); startAnim(+1); });
+ui.btnLower.addEventListener("click", () => { stopAnim(); startAnim(-1); });
+ui.btnStop.addEventListener("click", () => stopAnim());
 
 // -------------------- Init --------------------
-init3D();
 updateGeomLabels(lastGeomUnits);
 updateLoadLabels(lastLoadUnits);
 refreshActuatorSelects(Math.round(Number(ui.N.value)) || 2);
+
+// init 3D (or fallback)
+init3D();
+
+// first draw
 update();
